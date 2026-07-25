@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    font-family: 'Noto Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+  }
+  .btn-secondary {
+    @apply btn bg-surface-700 text-surface-100 hover:bg-surface-600;
+  }
+  .btn-ghost {
+    @apply btn text-surface-300 hover:bg-surface-700 hover:text-surface-100;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700;
+  }
+  .input {
+    @apply w-full rounded-md bg-surface-800 border border-surface-600 px-3 py-2 text-sm text-surface-100 placeholder-surface-500 focus:outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500;
+  }
+  .select {
+    @apply input cursor-pointer;
+  }
+  .label {
+    @apply block text-xs font-medium text-surface-400 mb-1;
+  }
+  .panel {
+    @apply bg-surface-800 border border-surface-700 rounded-lg;
+  }
+  .modal-overlay {
+    @apply fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm;
+  }
+  .modal-content {
+    @apply bg-surface-800 border border-surface-600 rounded-xl shadow-2xl w-full max-w-md p-6;
+  }
+  .track-card {
+    @apply select-none cursor-pointer rounded-md border transition-all;
+  }
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* 时间轴拖拽相关 */
+.dnd-dragging {
+  opacity: 0.5;
+}
+.dnd-over {
+  outline: 2px dashed #3b82f6;
+  outline-offset: -2px;
+}

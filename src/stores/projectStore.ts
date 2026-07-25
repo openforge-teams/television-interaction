@@ -80,13 +80,21 @@ export const useProjectStore = create<ProjectStoreState>()(
 
       loadProject: (data, path) => {
         // 加载项目时清除撤销/重做历史，防止跨项目撤销
-        const { clear } = useProjectStore.temporal.getState();
-        clear();
+        const temporal = useProjectStore.temporal.getState();
+        temporal.clear();
         set({ data, projectPath: path, isDirty: false });
+        // set() 会产生一条历史记录，再次清除以确保完全干净
+        temporal.clear();
       },
 
-      newProject: (name) =>
-        set({ data: createEmptyProjectData(name), projectPath: null, isDirty: false }),
+      newProject: (name) => {
+        // 新建项目时清除撤销/重做历史，防止跨项目撤销
+        const temporal = useProjectStore.temporal.getState();
+        temporal.clear();
+        set({ data: createEmptyProjectData(name), projectPath: null, isDirty: false });
+        // set() 会产生一条历史记录，再次清除以确保完全干净
+        temporal.clear();
+      },
 
       updateMeta: (partial) =>
         set((s) => ({

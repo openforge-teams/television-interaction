@@ -8,16 +8,14 @@ import { useUIStore } from '@/stores/uiStore';
 
 export default function App() {
   const [view, setView] = useState<'launcher' | 'editor'>('launcher');
-  const newProject = useProjectStore((s) => s.newProject);
   const loadProject = useProjectStore((s) => s.loadProject);
   const showSettingsModal = useUIStore((s) => s.showSettingsModal);
   const setShowSettingsModal = useUIStore((s) => s.setShowSettingsModal);
   const meta = useProjectStore((s) => s.data.meta);
   const updateMeta = useProjectStore((s) => s.updateMeta);
 
-  const handleNewProject = (name: string, path: string) => {
-    newProject(name);
-    useProjectStore.getState().setProjectPath(path);
+  const handleNewProject = (_name: string, _path: string) => {
+    // Launcher 已完成项目创建和配置，此处只需切换视图
     setView('editor');
   };
 

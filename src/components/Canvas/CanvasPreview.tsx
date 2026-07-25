@@ -7,7 +7,6 @@ import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { Application, Container, Graphics, Text } from 'pixi.js';
 import { useProjectStore } from '@/stores/projectStore';
 import type {
-  SceneNode,
   BackgroundNode,
   SpriteNode,
   DialogueNode,
@@ -50,11 +49,6 @@ export function CanvasPreview() {
     const scene = data.scenes[currentSceneId];
     return scene?.nodes ?? [];
   }, [data.scenes, currentSceneId]);
-
-  const nodesHash = useMemo(
-    () => JSON.stringify(nodes.map((n) => n.id + ':' + n.position + ':' + n.trackIndex)),
-    [nodes]
-  );
 
   // ===== 初始化 PixiJS（仅在挂载时执行一次） =====
   useEffect(() => {

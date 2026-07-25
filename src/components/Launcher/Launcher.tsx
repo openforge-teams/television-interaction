@@ -9,7 +9,6 @@ import type { RecentProject } from '@/services/fileService';
 import { RESOLUTION_PRESETS, FONT_PRESETS } from '@/types';
 import { useProjectStore } from '@/stores/projectStore';
 import { toast } from '@/stores/toastStore';
-import { v4 as uuidv4 } from 'uuid';
 import type { ProjectData } from '@/types';
 
 interface LauncherProps {

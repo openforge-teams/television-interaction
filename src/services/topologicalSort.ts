@@ -24,7 +24,7 @@ function collectEdges(project: ProjectData): Map<string, Set<string>> {
   for (const scene of Object.values(project.scenes)) {
     for (const node of scene.nodes) {
       if (node.type === 'choice') {
-        for (const choice of node.choices) {
+        for (const choice of node.choices ?? []) {
           if (choice.targetSceneId && project.scenes[choice.targetSceneId]) {
             edges.get(scene.id)!.add(choice.targetSceneId);
           }

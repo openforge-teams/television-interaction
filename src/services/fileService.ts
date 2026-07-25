@@ -54,21 +54,22 @@ export function removeRecentProject(path: string): void {
  * Electron 环境：写入磁盘；浏览器环境：写入 localStorage
  */
 export async function saveProject(data: ProjectData, path: string): Promise<void> {
+  // 保存操作与最近项目更新分离，避免更新失败误报保存失败
+  if (isElectron && window.electronAPI?.saveProject) {
+    await window.electronAPI.saveProject(data, path);
+  } else {
+    // 浏览器降级：用 localStorage
+    localStorage.setItem(`project_${path}`, JSON.stringify(data));
+  }
+  // 更新最近项目列表，失败不影响保存结果
   try {
-    if (isElectron && window.electronAPI?.saveProject) {
-      await window.electronAPI.saveProject(data, path);
-    } else {
-      // 浏览器降级：用 localStorage
-      localStorage.setItem(`project_${path}`, JSON.stringify(data));
-    }
     addRecentProject({
       name: data.meta.name,
       path,
       lastModified: new Date().toISOString(),
     });
   } catch (e) {
-    console.error('保存项目失败:', e);
-    throw new Error(`保存项目失败: ${(e as Error).message}`);
+    console.warn('更新最近项目列表失败:', e);
   }
 }
 

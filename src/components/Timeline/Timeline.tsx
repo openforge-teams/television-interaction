@@ -114,7 +114,6 @@ function TrackRow({
   };
 
   const handleDragEnter = (e: React.DragEvent) => {
-    const assetTypeData = e.dataTransfer.getData('application/x-asset-type');
     // dataTransfer.getData 在 dragenter 时可能为空，用 types 判断
     if (!e.dataTransfer.types.includes('application/x-asset-id')) return;
     e.preventDefault();

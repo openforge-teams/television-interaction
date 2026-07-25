@@ -59,7 +59,8 @@ export function ExportModal() {
       setIssues(result.issues);
 
       if (result.issues.some((i) => i.severity === 'error')) {
-        toast.error(`编译存在 ${errorCount || result.issues.filter((i) => i.severity === 'error').length} 个错误，已停止导出`);
+        const actualErrorCount = result.issues.filter((i) => i.severity === 'error').length;
+        toast.error(`编译存在 ${actualErrorCount} 个错误，已停止导出`);
         setBusy(false);
         setExporting(false);
         return;

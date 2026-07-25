@@ -56,6 +56,8 @@ export class Compiler {
   compileProject(project: ProjectData): CompileResult {
     this.issues = [];
     this.innerLabels = new Set();
+    this.sceneLabels = new Set();
+    this.sceneIdToName = new Map();
     this.assetMap = new Map(project.assets.map((a) => [a.id, a]));
     this.variableNames = new Set(project.variables.map((v) => v.name));
 
@@ -64,6 +66,8 @@ export class Compiler {
       this.sceneLabels.add(this.sanitizeLabel(scene.name));
       this.sceneIdToName.set(scene.id, scene.name);
     }
+    // start 是游戏入口 label，始终有效
+    this.sceneLabels.add('start');
 
     const { sorted, hasCycle, cycleScenes } = topologicalSort(project);
     if (hasCycle) {
@@ -396,11 +400,17 @@ export class Compiler {
       this.innerLabels.add(labelName);
       return `${INDENT}label ${labelName}:\n`;
     } else if (node.subType === 'jump') {
-      const target = node.targetLabel || 'start';
-      if (target) {
-        this.validateJumpTarget(target, node.id, sceneId);
+      if (!node.targetLabel || !node.targetLabel.trim()) {
+        this.issues.push({
+          severity: 'warning',
+          message: '跳转节点未指定目标，将跳转到 start',
+          nodeId: node.id,
+          sceneId,
+        });
+        return `${INDENT}jump start\n`;
       }
-      const resolvedLabel = this.resolveJumpTarget(target);
+      this.validateJumpTarget(node.targetLabel, node.id, sceneId);
+      const resolvedLabel = this.resolveJumpTarget(node.targetLabel);
       return `${INDENT}jump ${resolvedLabel}\n`;
     } else if (node.subType === 'return') {
       return `${INDENT}return\n`;

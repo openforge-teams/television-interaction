@@ -45,18 +45,24 @@ export class Compiler {
   private assetMap: Map<string, AssetEntry> = new Map();
   private variableNames: Set<string> = new Set();
   private sceneLabels: Set<string> = new Set();
+  /** 场景 ID -> 场景名的映射，用于将 targetSceneId（UUID）解析为场景名 */
+  private sceneIdToName: Map<string, string> = new Map();
+  /** 收集的内部 label 名（label 节点定义的） */
+  private innerLabels: Set<string> = new Set();
 
   /**
    * 编译整个项目
    */
   compileProject(project: ProjectData): CompileResult {
     this.issues = [];
+    this.innerLabels = new Set();
     this.assetMap = new Map(project.assets.map((a) => [a.id, a]));
     this.variableNames = new Set(project.variables.map((v) => v.name));
 
-    // 收集所有场景 label 名
+    // 收集所有场景 label 名，并建立 ID->name 映射
     for (const scene of Object.values(project.scenes)) {
       this.sceneLabels.add(this.sanitizeLabel(scene.name));
+      this.sceneIdToName.set(scene.id, scene.name);
     }
 
     const { sorted, hasCycle, cycleScenes } = topologicalSort(project);
@@ -214,6 +220,7 @@ export class Compiler {
         nodeId: node.id,
         sceneId,
       });
+      return `${INDENT}# [警告: 立绘节点未指定角色]\n`;
     }
     if (node.visible) {
       let code = `${INDENT}show ${node.characterId}`;
@@ -308,32 +315,55 @@ export class Compiler {
     return '';
   }
 
+  /**
+   * 将场景 UUID 解析为可跳转的 label 名
+   * 支持两种目标：场景 ID（UUID）或自定义 label 名
+   */
+  private resolveJumpTarget(targetIdOrName: string): string {
+    // 如果是 UUID 格式（包含连字符），尝试从映射中找场景名
+    if (targetIdOrName.includes('-') && this.sceneIdToName.has(targetIdOrName)) {
+      return this.sanitizeLabel(this.sceneIdToName.get(targetIdOrName)!);
+    }
+    // 否则当作 label 名直接 sanitize
+    return this.sanitizeLabel(targetIdOrName);
+  }
+
+  /**
+   * 校验跳转目标是否存在（场景 label 或内部 label）
+   */
+  private validateJumpTarget(targetIdOrName: string, nodeId: string, sceneId: string): void {
+    const label = this.resolveJumpTarget(targetIdOrName);
+    if (!this.sceneLabels.has(label) && !this.innerLabels.has(label)) {
+      this.issues.push({
+        severity: 'warning',
+        message: `跳转目标 "${targetIdOrName}" (label: ${label}) 可能不存在`,
+        nodeId,
+        sceneId,
+      });
+    }
+  }
+
   private compileChoice(node: ChoiceNode, sceneId: string): string {
     let code = `${INDENT}menu:\n`;
     for (const choice of node.choices) {
-      // 校验跳转目标
-      if (choice.targetSceneId && !this.sceneLabels.has(choice.targetSceneId)) {
-        this.issues.push({
-          severity: 'error',
-          message: `选项跳转目标不存在: ${choice.targetSceneId}`,
-          nodeId: node.id,
-          sceneId,
-        });
-      }
       const escapedText = this.escapeString(choice.text);
-      const targetLabel = this.sanitizeLabel(choice.targetSceneId || 'start');
+      const targetLabel = choice.targetSceneId
+        ? this.resolveJumpTarget(choice.targetSceneId)
+        : 'start';
 
-      // 条件选项
+      // 校验跳转目标
+      if (choice.targetSceneId) {
+        this.validateJumpTarget(choice.targetSceneId, node.id, sceneId);
+      }
+
+      // 条件选项使用 Ren'Py 行内 if 语法："选项文本" if condition:
       if (choice.condition && choice.condition.trim()) {
-        code += `${INDENT}${INDENT}if ${choice.condition}:\n`;
-        code += `${INDENT.repeat(3)}"${escapedText}":\n`;
-        code += this.compileChoiceEffects(choice.variableEffects, node.id, sceneId, 4);
-        code += `${INDENT.repeat(4)}jump ${targetLabel}\n`;
+        code += `${INDENT}${INDENT}"${escapedText}" if ${choice.condition.trim()}:\n`;
       } else {
         code += `${INDENT}${INDENT}"${escapedText}":\n`;
-        code += this.compileChoiceEffects(choice.variableEffects, node.id, sceneId, 3);
-        code += `${INDENT.repeat(3)}jump ${targetLabel}\n`;
       }
+      code += this.compileChoiceEffects(choice.variableEffects, node.id, sceneId, 3);
+      code += `${INDENT.repeat(3)}jump ${targetLabel}\n`;
     }
     return code;
   }
@@ -361,17 +391,17 @@ export class Compiler {
 
   private compileJumpLabel(node: JumpLabelNode, sceneId: string): string {
     if (node.subType === 'label') {
-      return `${INDENT}label ${this.sanitizeLabel(node.labelName || 'label_1')}:\n`;
+      const labelName = this.sanitizeLabel(node.labelName || 'label_1');
+      // 记录内部 label 以便后续 jump 校验
+      this.innerLabels.add(labelName);
+      return `${INDENT}label ${labelName}:\n`;
     } else if (node.subType === 'jump') {
-      if (node.targetLabel && !this.sceneLabels.has(node.targetLabel)) {
-        this.issues.push({
-          severity: 'warning',
-          message: `跳转目标 label 可能不存在: ${node.targetLabel}`,
-          nodeId: node.id,
-          sceneId,
-        });
+      const target = node.targetLabel || 'start';
+      if (target) {
+        this.validateJumpTarget(target, node.id, sceneId);
       }
-      return `${INDENT}jump ${this.sanitizeLabel(node.targetLabel || 'start')}\n`;
+      const resolvedLabel = this.resolveJumpTarget(target);
+      return `${INDENT}jump ${resolvedLabel}\n`;
     } else if (node.subType === 'return') {
       return `${INDENT}return\n`;
     }

@@ -7,7 +7,6 @@ import { Icon, Modal, EmptyState } from '@/components/ui';
 import { getRecentProjects, removeRecentProject, loadProject, selectFolder } from '@/services/fileService';
 import type { RecentProject } from '@/services/fileService';
 import { RESOLUTION_PRESETS, FONT_PRESETS } from '@/types';
-import { createDefaultProjectMeta } from '@/types/factory';
 import { useProjectStore } from '@/stores/projectStore';
 import { toast } from '@/stores/toastStore';
 import { v4 as uuidv4 } from 'uuid';
@@ -189,18 +188,11 @@ function NewProjectModal({
       return;
     }
 
-    // 创建项目元数据并初始化
-    const meta = createDefaultProjectMeta(name);
-    meta.author = author;
     const [w, h] = resolution.split('x').map(Number);
-    meta.resolution = { width: w, height: h };
-    meta.defaultFont = font;
-    meta.themeColor = themeColor;
 
-    // 使用 store 创建项目
+    // 使用 store 创建项目，然后立即应用用户配置
     const store = useProjectStore.getState();
     store.newProject(name);
-    // 应用设置
     store.updateMeta({
       author,
       resolution: { width: w, height: h },

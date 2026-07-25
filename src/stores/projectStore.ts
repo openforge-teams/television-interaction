@@ -78,8 +78,12 @@ export const useProjectStore = create<ProjectStoreState>()(
       projectPath: null,
       isDirty: false,
 
-      loadProject: (data, path) =>
-        set({ data, projectPath: path, isDirty: false }),
+      loadProject: (data, path) => {
+        // 加载项目时清除撤销/重做历史，防止跨项目撤销
+        const { clear } = useProjectStore.temporal.getState();
+        clear();
+        set({ data, projectPath: path, isDirty: false });
+      },
 
       newProject: (name) =>
         set({ data: createEmptyProjectData(name), projectPath: null, isDirty: false }),

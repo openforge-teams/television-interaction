@@ -3,7 +3,7 @@
  * 使用 PixiJS 8.x 渲染当前场景节点的可视化预览。
  * 浏览器环境无真实素材文件，所有视觉元素均以占位矩形/文字绘制。
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { Application, Container, Graphics, Text } from 'pixi.js';
 import { useProjectStore } from '@/stores/projectStore';
 import type {
@@ -39,12 +39,22 @@ export function CanvasPreview() {
 
   const data = useProjectStore((s) => s.data);
   const currentSceneId = data.meta.currentSceneId;
-  const currentScene = currentSceneId ? data.scenes[currentSceneId] : undefined;
-  const nodes = currentScene?.nodes ?? [];
   const resolution = data.meta.resolution;
   const characters = data.characters;
   const assets = data.assets;
   const themeColor = data.meta.themeColor;
+
+  // 使用 useMemo 避免每次渲染生成新的 nodes 引用导致 useEffect 无限循环
+  const nodes = useMemo(() => {
+    if (!currentSceneId) return [];
+    const scene = data.scenes[currentSceneId];
+    return scene?.nodes ?? [];
+  }, [data.scenes, currentSceneId]);
+
+  const nodesHash = useMemo(
+    () => JSON.stringify(nodes.map((n) => n.id + ':' + n.position + ':' + n.trackIndex)),
+    [nodes]
+  );
 
   // ===== 初始化 PixiJS（仅在挂载时执行一次） =====
   useEffect(() => {
@@ -125,27 +135,16 @@ export function CanvasPreview() {
   }, [resolution.width, resolution.height, appReady]);
 
   // ===== 节点变化重新渲染 =====
-  useEffect(() => {
-    if (!appReady) return;
-    drawScene();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, characters, assets, themeColor, appReady]);
-
-  /** 查找角色定义 */
-  function getCharacter(id: string): CharacterDef | undefined {
-    return characters.find((c) => c.id === id);
-  }
-
-  /** 主绘制函数：清空舞台并按 position 升序绘制节点 */
-  function drawScene() {
+  // 使用 useCallback 稳定化 drawScene 引用
+  const drawScene = useCallback(() => {
     const stage = stageRef.current;
-    if (!stage) return;
+    const app = appRef.current;
+    if (!stage || !app) return;
     stage.removeChildren();
 
     const W = resolution.width;
     const H = resolution.height;
 
-    // 按 position（轨道顺序）升序遍历，相同 position 按 trackIndex 排序
     const sorted = [...nodes].sort((a, b) => {
       if (a.position !== b.position) return a.position - b.position;
       return a.trackIndex - b.trackIndex;
@@ -165,11 +164,20 @@ export function CanvasPreview() {
         case 'choice':
           drawChoice(node, W, H);
           break;
-        // video / audio 不渲染视觉元素
         default:
           break;
       }
     }
+  }, [nodes, characters, assets, themeColor, resolution]);
+
+  useEffect(() => {
+    if (!appReady) return;
+    drawScene();
+  }, [drawScene, appReady]);
+
+  /** 查找角色定义 */
+  function getCharacter(id: string): CharacterDef | undefined {
+    return characters.find((c) => c.id === id);
   }
 
   /** 背景：全屏矩形，使用主题色占位 */

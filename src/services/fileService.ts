@@ -159,30 +159,62 @@ const FORMAT_TO_TYPE: Record<string, AssetType> = {
 /**
  * 导入素材文件到浏览器
  * 将 File 对象存入 IndexedDB，返回 AssetEntry 元数据
+ * @param files 用户选择的文件
+ * @param forceType 用户在素材库选择的分类（如 'sprite'），传入则直接使用
  */
 export async function importAssetFiles(
-  files: File[]
+  files: File[],
+  forceType?: AssetType
 ): Promise<AssetEntry[]> {
   const results: AssetEntry[] = [];
 
   for (const file of files) {
     const ext = file.name.split('.').pop()?.toLowerCase() as AssetFormat;
-    const type = FORMAT_TO_TYPE[ext];
+    if (!ext) continue;
+
+    // 验证文件扩展名是否与强制类型兼容
+    const EXT_FOR_TYPE: Record<string, string[]> = {
+      background: ['png', 'jpg', 'jpeg'],
+      sprite: ['png', 'jpg', 'jpeg'],
+      video: ['mp4', 'webm'],
+      bgm: ['ogg', 'mp3', 'wav'],
+      sfx: ['ogg', 'mp3', 'wav'],
+      voice: ['ogg', 'mp3', 'wav'],
+    };
+
+    let type: AssetType | undefined;
+    if (forceType) {
+      // 用户明确选择了类型，直接使用
+      type = forceType;
+    } else {
+      // 未指定类型，根据扩展名推断
+      type = FORMAT_TO_TYPE[ext];
+    }
     if (!type) continue;
+
+    // 如果文件扩展名与类型不兼容，跳过
+    if (forceType && !EXT_FOR_TYPE[forceType]?.includes(ext)) continue;
 
     const assetId = crypto.randomUUID();
 
     // 分析文件名提取元数据（角色名_表情）
+    // 支持多种格式：英文名_表情、中文名-风格、角色名_表情_变体 等
     const baseName = file.name.replace(/\.[^.]+$/, '');
     let characterId: string | undefined;
     let emotion: string | undefined;
-    const match = baseName.match(/^([a-zA-Z_][a-zA-Z0-9_]*)_(.+)$/);
-    if (match && type === 'background') {
-      characterId = match[1];
-      emotion = match[2];
-    }
 
-    const actualType = characterId ? 'sprite' : type;
+    // 格式1：英文字母/下划线开头，下划线分隔（如 alice_happy）
+    const match1 = baseName.match(/^([a-zA-Z_][a-zA-Z0-9_]*)_(.+)$/);
+    // 格式2：中文名-风格（如 楚-古代）
+    const match2 = baseName.match(/^(.+?)[-_]([^\-_.]+)$/);
+
+    if (type === 'sprite' && match1) {
+      characterId = match1[1];
+      emotion = match1[2];
+    } else if (type === 'sprite' && match2) {
+      characterId = match2[1];
+      emotion = match2[2];
+    }
 
     // 存入 IndexedDB
     await saveAssetBlob(assetId, file);
@@ -197,7 +229,7 @@ export async function importAssetFiles(
       id: assetId,
       fileName: file.name,
       relativePath: `assets/${assetId}_${file.name}`,
-      type: actualType,
+      type,
       format: ext,
       fileSize: file.size,
       resolution,

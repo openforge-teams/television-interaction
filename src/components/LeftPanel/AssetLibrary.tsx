@@ -187,7 +187,8 @@ export function AssetLibrary() {
       if (!files || files.length === 0) return;
 
       // 导入到 IndexedDB，返回 AssetEntry 元数据
-      const entries = await importAssetFiles(files);
+      // 传入用户选择的素材类型，确保分类正确
+      const entries = await importAssetFiles(files, type);
 
       if (entries.length === 0) {
         toast.warning('未选中可导入的素材文件');

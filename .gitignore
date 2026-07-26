@@ -5,3 +5,4 @@ dist/
 *.log
 electron/dist/
 .vite/
+/.idea

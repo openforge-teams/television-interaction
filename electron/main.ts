@@ -55,6 +55,22 @@ app.whenReady().then(() => {
     return result.filePaths[0];
   });
 
+  // 文件选择对话框（素材导入）
+  ipcMain.handle('dialog:selectFiles', async (_event, filters: { name: string; extensions: string[] }[]) => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openFile', 'multiSelections'],
+      title: '选择素材文件',
+      filters: filters || [
+        { name: '图片', extensions: ['png', 'jpg', 'jpeg'] },
+        { name: '视频', extensions: ['mp4', 'webm'] },
+        { name: '音频', extensions: ['ogg', 'mp3', 'wav'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths;
+  });
+
   createWindow();
 
   app.on('activate', () => {

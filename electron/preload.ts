@@ -11,6 +11,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 文件夹选择
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
 
+  // 文件选择（素材导入）
+  selectFiles: (filters?: { name: string; extensions: string[] }[]) =>
+    ipcRenderer.invoke('dialog:selectFiles', filters),
+
   // 素材导入
   importAssets: (projectPath: string, filePaths: string[]) =>
     ipcRenderer.invoke('assets:import', projectPath, filePaths),

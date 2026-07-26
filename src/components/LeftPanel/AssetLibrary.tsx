@@ -2,17 +2,16 @@
  * 素材库 - 对应文档第二章
  * 顶部搜索框 + 筛选标签，网格视图显示素材缩略图
  * 右键菜单：删除、重命名、复制路径
- * 导入素材：浏览器降级模式下创建模拟素材条目
+ * 导入素材：通过系统文件选择器选择文件并导入
  */
 import { useState, useEffect } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import { v4 as uuidv4 } from 'uuid';
 import { Icon, EmptyState } from '@/components/ui';
 import { useProjectStore } from '@/stores/projectStore';
 import { useUIStore, type AssetFilter } from '@/stores/uiStore';
 import { toast } from '@/stores/toastStore';
-import type { AssetEntry, AssetType, AssetFormat } from '@/types';
-import { ASSET_WHITELIST } from '@/types';
+import { selectFiles, importAssets } from '@/services/fileService';
+import type { AssetEntry, AssetType } from '@/types';
 
 const FILTER_TAGS: { id: AssetFilter; label: string }[] = [
   { id: 'all', label: '全部' },
@@ -52,34 +51,15 @@ const IMPORTABLE_TYPES: AssetType[] = [
   'voice',
 ];
 
-// 根据素材类型取白名单中的首个格式作为默认格式
-function getDefaultFormat(type: AssetType): AssetFormat {
-  return ASSET_WHITELIST[type][0];
-}
-
-// 创建模拟素材条目（浏览器降级模式）
-function createMockAsset(type: AssetType): AssetEntry {
-  const format = getDefaultFormat(type);
-  const stamp = Date.now();
-  const fileName = `mock_${type}_${stamp}.${format}`;
-  const isImage = type === 'background' || type === 'sprite';
-  const isVideo = type === 'video';
-  const isAudio = type === 'bgm' || type === 'sfx' || type === 'voice';
-
-  return {
-    id: uuidv4(),
-    fileName,
-    relativePath: `${type}/${fileName}`,
-    type,
-    format,
-    fileSize: Math.floor(Math.random() * 1024 * 1024) + 1024,
-    resolution: isImage || isVideo ? { width: 1280, height: 720 } : undefined,
-    duration: isVideo || isAudio ? Math.floor(Math.random() * 60) + 1 : undefined,
-    tags: [],
-    thumbnailPath: `${type}/thumbnails/${fileName}`,
-    importedAt: new Date().toISOString(),
-  };
-}
+// 素材类型对应的文件扩展名过滤
+const TYPE_TO_ACCEPT: Record<AssetType, string> = {
+ background: '.png,.jpg,.jpeg',
+ sprite: '.png,.jpg,.jpeg',
+ video: '.mp4,.webm',
+ bgm: '.ogg,.mp3,.wav',
+ sfx: '.ogg,.mp3,.wav',
+ voice: '.ogg,.mp3,.wav',
+};
 
 interface ContextMenuState {
   x: number;
@@ -137,11 +117,29 @@ export function AssetLibrary() {
     setContextMenu({ x: e.clientX, y: e.clientY, assetId });
   };
 
-  const handleImport = (type: AssetType) => {
-    const asset = createMockAsset(type);
-    addAsset(asset);
-    toast.success(`已导入${ASSET_TYPE_LABEL[type]}素材: ${asset.fileName}`);
+  const handleImport = async (type: AssetType) => {
     setShowImportMenu(false);
+    try {
+      // 调用系统文件选择器
+      const accept = TYPE_TO_ACCEPT[type];
+      const filePaths = await selectFiles(accept);
+      if (!filePaths || filePaths.length === 0) return;
+
+      const projectPath = useProjectStore.getState().projectPath || '';
+      const entries = await importAssets(projectPath, filePaths);
+
+      if (entries.length === 0) {
+        toast.warning('未选中可导入的素材文件');
+        return;
+      }
+
+      for (const entry of entries) {
+        addAsset(entry);
+      }
+      toast.success(`已导入 ${entries.length} 个${ASSET_TYPE_LABEL[type]}素材`);
+    } catch (e) {
+      toast.error('导入素材失败: ' + (e as Error).message);
+    }
   };
 
   const handleDelete = (assetId: string) => {

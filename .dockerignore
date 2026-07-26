@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-electron
+*.log
+.git
+.gitignore
+.vscode
+.idea
+*.md
+.DS_Store
+Thumbs.db
+tests
+coverage
+.vue

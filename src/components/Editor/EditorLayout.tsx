@@ -1,6 +1,7 @@
 /**
  * 主编辑器布局 - 对应文档 4.1
- * 顶部工具栏 + 左侧面板 + 时间轴 + 画布预览 + 属性检查器
+ * 顶部工具栏 + 左侧面板 + 画布预览 + 时间轴 + 属性检查器
+ * 布局：画布在上（flex-1），时间轴在下（固定高度可折叠），属性检查器在底部
  */
 import { Toolbar } from './Toolbar';
 import { LeftPanel } from '../LeftPanel/LeftPanel';
@@ -28,7 +29,7 @@ export function EditorLayout({ onBackToLauncher }: EditorLayoutProps) {
       <Toolbar onBackToLauncher={onBackToLauncher} />
 
       {/* 主体区域 */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         {/* 左侧面板 */}
         {!leftPanelCollapsed && (
           <div className="w-[260px] flex-shrink-0 border-r border-surface-700 bg-surface-800 flex flex-col">
@@ -36,33 +37,31 @@ export function EditorLayout({ onBackToLauncher }: EditorLayoutProps) {
           </div>
         )}
 
-        {/* 中间编辑区 */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        {/* 中间编辑区：画布（上）+ 时间轴（下） */}
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
           {/* 场景导航栏 */}
           <SceneNavigator />
 
-          {/* 时间轴 */}
-          <div className="flex-1 overflow-hidden min-h-0">
-            <Timeline />
-          </div>
-
-          {/* 画布预览 */}
-          <div className="h-[400px] flex-shrink-0 border-t border-surface-700 bg-surface-950">
+          {/* 画布预览 - 占据上方主要空间 */}
+          <div className="flex-1 min-h-0 overflow-hidden bg-surface-950">
             <CanvasPreview />
           </div>
-        </div>
-      </div>
 
-      {/* 底部属性检查器 + 问题面板 */}
-      <div className="h-[200px] flex-shrink-0 border-t border-surface-700 bg-surface-800 flex">
-        <div className="flex-1 overflow-hidden">
-          <Inspector />
-        </div>
-        {showProblemsPanel && (
-          <div className="w-[360px] flex-shrink-0 border-l border-surface-700 overflow-hidden">
-            <ProblemsPanel />
+          {/* 时间轴 - 固定高度，可滚动 */}
+          <div className="h-[220px] flex-shrink-0 border-t-2 border-surface-700 bg-surface-900 overflow-hidden">
+            <Timeline />
           </div>
-        )}
+        </div>
+
+        {/* 右侧属性检查器 */}
+        <div className="w-[280px] flex-shrink-0 border-l border-surface-700 bg-surface-800 overflow-hidden flex flex-col">
+          <Inspector />
+          {showProblemsPanel && (
+            <div className="h-[200px] flex-shrink-0 border-t border-surface-700 overflow-hidden">
+              <ProblemsPanel />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 弹窗 */}

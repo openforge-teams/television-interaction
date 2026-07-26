@@ -10,7 +10,7 @@ import { Icon, EmptyState } from '@/components/ui';
 import { useProjectStore } from '@/stores/projectStore';
 import { useUIStore, type AssetFilter } from '@/stores/uiStore';
 import { toast } from '@/stores/toastStore';
-import { selectFiles, importAssetFiles, removeAsset } from '@/services/fileService';
+import { selectFiles, importAssetFiles, removeAsset, getAssetURL2 } from '@/services/fileService';
 import type { AssetEntry, AssetType } from '@/types';
 
 const FILTER_TAGS: { id: AssetFilter; label: string }[] = [
@@ -65,6 +65,67 @@ interface ContextMenuState {
   x: number;
   y: number;
   assetId: string;
+}
+
+// ===== 素材缩略图：从 IndexedDB 加载真实图片 =====
+function AssetThumbnail({ asset }: { asset: AssetEntry }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoaded(false);
+    (async () => {
+      const u = await getAssetURL2(asset.id);
+      if (!cancelled) setUrl(u);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [asset.id]);
+
+  // 图片和视频显示真实缩略图
+  const isVisual = asset.type === 'background' || asset.type === 'sprite' || asset.type === 'video';
+
+  if (isVisual && url) {
+    return (
+      <div className="aspect-square overflow-hidden bg-surface-900/50 relative">
+        {asset.type === 'video' ? (
+          <video
+            src={url}
+            className="w-full h-full object-cover"
+            muted
+            onLoadedData={() => setLoaded(true)}
+          />
+        ) : (
+          <img
+            src={url}
+            alt={asset.fileName}
+            className={`w-full h-full object-cover transition-opacity ${
+              loaded ? 'opacity-100' : 'opacity-0'
+            }`}
+            onLoad={() => setLoaded(true)}
+          />
+        )}
+        {!loaded && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-6 h-6 border-2 border-surface-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // 非图片素材（音频等）显示图标占位
+  return (
+    <div className="aspect-square flex items-center justify-center bg-surface-900/50">
+      <Icon
+        name={ASSET_TYPE_ICON[asset.type]}
+        size={36}
+        className="text-surface-500"
+      />
+    </div>
+  );
 }
 
 export function AssetLibrary() {
@@ -294,14 +355,8 @@ export function AssetLibrary() {
                   e.dataTransfer.effectAllowed = 'copy';
                 }}
               >
-                {/* 缩略图占位符（120x120 设计，按面板宽度自适应） */}
-                <div className="aspect-square flex items-center justify-center bg-surface-900/50">
-                  <Icon
-                    name={ASSET_TYPE_ICON[asset.type]}
-                    size={36}
-                    className="text-surface-500"
-                  />
-                </div>
+                {/* 真实缩略图（从 IndexedDB 加载） */}
+                <AssetThumbnail asset={asset} />
                 {/* 类型角标 */}
                 <span className="absolute top-1 left-1 px-1 py-0.5 rounded bg-black/50 text-2xs text-surface-200">
                   {ASSET_TYPE_LABEL[asset.type]}

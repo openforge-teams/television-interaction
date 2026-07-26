@@ -5,6 +5,19 @@
 import type { ProjectData, SceneNode, LintIssue } from '@/types';
 import { topologicalSort } from './topologicalSort';
 
+/** 将名称清洗为 Ren'Py 合法 label 名（与 compiler 保持一致） */
+function sanitizeLabel(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '_').toLowerCase() || 'unnamed';
+}
+
+/** 将 UUID 或场景名解析为 label 名（与 compiler 保持一致） */
+function resolveJumpTarget(targetIdOrName: string, sceneIdToName: Map<string, string>): string {
+  if (targetIdOrName.includes('-') && sceneIdToName.has(targetIdOrName)) {
+    return sanitizeLabel(sceneIdToName.get(targetIdOrName)!);
+  }
+  return sanitizeLabel(targetIdOrName);
+}
+
 export function lintProject(project: ProjectData): LintIssue[] {
   const issues: LintIssue[] = [];
   const variableNames = new Set(project.variables.map((v) => v.name));
@@ -12,6 +25,22 @@ export function lintProject(project: ProjectData): LintIssue[] {
   const characterIds = new Set(project.characters.map((c) => c.id));
   const sceneIds = new Set(Object.keys(project.scenes));
   const sceneNames = new Set(Object.values(project.scenes).map((s) => s.name));
+  // 收集所有合法 label（场景名 sanitize 后 + 内部 label）
+  const validLabels = new Set<string>();
+  const sceneIdToName = new Map<string, string>();
+  for (const scene of Object.values(project.scenes)) {
+    validLabels.add(sanitizeLabel(scene.name));
+    sceneIdToName.set(scene.id, scene.name);
+  }
+  validLabels.add('start');
+  // 收集内部 label
+  for (const scene of Object.values(project.scenes)) {
+    for (const node of scene.nodes) {
+      if (node.type === 'jump_label' && node.subType === 'label' && node.labelName) {
+        validLabels.add(sanitizeLabel(node.labelName));
+      }
+    }
+  }
 
   // 死循环检测：拓扑排序
   const { hasCycle, cycleScenes } = topologicalSort(project);
@@ -50,7 +79,7 @@ export function lintProject(project: ProjectData): LintIssue[] {
     }
 
     for (const node of scene.nodes) {
-      lintNode(node, scene.id, { variableNames, assetIds, characterIds, sceneIds, sceneNames, issues });
+      lintNode(node, scene.id, { variableNames, assetIds, characterIds, sceneIds, sceneNames, validLabels, sceneIdToName, issues });
     }
   }
 
@@ -83,6 +112,8 @@ interface LintContext {
   characterIds: Set<string>;
   sceneIds: Set<string>;
   sceneNames: Set<string>;
+  validLabels: Set<string>;
+  sceneIdToName: Map<string, string>;
   issues: LintIssue[];
 }
 
@@ -152,15 +183,18 @@ function lintNode(
 
     case 'choice':
       for (const choice of node.choices) {
-        // 跳转目标校验
-        if (choice.targetSceneId && !ctx.sceneIds.has(choice.targetSceneId) && !ctx.sceneNames.has(choice.targetSceneId)) {
-          ctx.issues.push({
-            severity: 'error',
-            message: `选项「${choice.text}」跳转目标不存在: ${choice.targetSceneId}`,
-            nodeId: node.id,
-            sceneId,
-            field: 'targetSceneId',
-          });
+        // 跳转目标校验（与 compiler 的 resolveJumpTarget 逻辑一致）
+        if (choice.targetSceneId) {
+          const resolvedLabel = resolveJumpTarget(choice.targetSceneId, ctx.sceneIdToName);
+          if (!ctx.validLabels.has(resolvedLabel)) {
+            ctx.issues.push({
+              severity: 'error',
+              message: `选项「${choice.text}」跳转目标不存在: ${choice.targetSceneId}`,
+              nodeId: node.id,
+              sceneId,
+              field: 'targetSceneId',
+            });
+          }
         }
         // 条件表达式校验
         if (choice.condition && choice.condition.trim()) {
@@ -233,7 +267,8 @@ function lintNode(
 
     case 'jump_label':
       if (node.subType === 'jump' && node.targetLabel) {
-        if (!ctx.sceneIds.has(node.targetLabel) && !ctx.sceneNames.has(node.targetLabel)) {
+        const resolvedLabel = resolveJumpTarget(node.targetLabel, ctx.sceneIdToName);
+        if (!ctx.validLabels.has(resolvedLabel)) {
           ctx.issues.push({
             severity: 'warning',
             message: `跳转目标可能不存在: ${node.targetLabel}`,

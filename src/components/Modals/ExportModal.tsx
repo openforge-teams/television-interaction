@@ -10,8 +10,6 @@ import { toast } from '@/stores/toastStore';
 import { compiler, type CompileIssue } from '@/services/compiler';
 import { exportProjectPackage } from '@/services/fileService';
 
-type Platform = 'Windows' | 'macOS' | 'Linux' | 'Web';
-
 export function ExportModal() {
   const open = useUIStore((s) => s.showExportModal);
   const setOpen = useUIStore((s) => s.setShowExportModal);
@@ -20,9 +18,6 @@ export function ExportModal() {
 
   const data = useProjectStore((s) => s.data);
 
-  const [platform, setPlatform] = useState<Platform>('Windows');
-  const [includeSDK, setIncludeSDK] = useState(false);
-  const [version, setVersion] = useState('1.0.0');
   const [issues, setIssues] = useState<CompileIssue[]>([]);
   const [progress, setProgress] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -67,9 +62,8 @@ export function ExportModal() {
 
       // 2. 模拟导出进度
       const steps = [
-        { label: '生成脚本', pct: 25 },
-        { label: '编译资源', pct: 55 },
-        { label: `打包 ${platform} SDK`, pct: 85 },
+        { label: '生成脚本', pct: 30 },
+        { label: '打包素材', pct: 70 },
         { label: '完成', pct: 100 },
       ];
       for (const step of steps) {
@@ -87,7 +81,7 @@ export function ExportModal() {
         result.screensRpy
       );
 
-      toast.success(`已导出 ${platform} 工程（版本 ${version}）`);
+      toast.success('项目已导出');
       await delay(300);
       close();
     } catch (e) {
@@ -116,43 +110,10 @@ export function ExportModal() {
       }
     >
       <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="label">目标平台</label>
-            <select
-              className="select"
-              value={platform}
-              onChange={(e) => setPlatform(e.target.value as Platform)}
-              disabled={busy}
-            >
-              <option value="Windows">Windows</option>
-              <option value="macOS">macOS</option>
-              <option value="Linux">Linux</option>
-              <option value="Web">Web</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">版本号</label>
-            <input
-              type="text"
-              className="input"
-              value={version}
-              onChange={(e) => setVersion(e.target.value)}
-              disabled={busy}
-            />
-          </div>
-        </div>
-
-        <label className="flex items-center gap-2 text-sm text-surface-200 cursor-pointer">
-          <input
-            type="checkbox"
-            className="accent-brand-500"
-            checked={includeSDK}
-            onChange={(e) => setIncludeSDK(e.target.checked)}
-            disabled={busy}
-          />
-          <span>包含 Ren'Py SDK（生成可独立运行的工程）</span>
-        </label>
+        <p className="text-xs text-surface-400">
+          将导出包含项目数据、素材文件和 Ren'Py 脚本的 .yypkg 包。
+          解压后可将 renpy/ 文件夹内的 .rpy 文件放入 Ren'Py 工程中使用。
+        </p>
 
         {/* 编译结果 */}
         {issues.length > 0 && (

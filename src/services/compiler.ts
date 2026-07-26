@@ -152,6 +152,14 @@ export class Compiler {
       return a.trackIndex - b.trackIndex;
     });
 
+    // 预先收集本场景内所有 label 节点的名称，避免前向跳转误报
+    for (const node of sortedNodes) {
+      if (node.type === 'jump_label' && (node as JumpLabelNode).subType === 'label') {
+        const name = this.sanitizeLabel((node as JumpLabelNode).labelName || 'label_1');
+        this.innerLabels.add(name);
+      }
+    }
+
     for (const node of sortedNodes) {
       code += this.compileNode(node, scene.id);
     }
@@ -212,7 +220,7 @@ export class Compiler {
     const imageName = `bg_${this.sanitizeName(asset.fileName)}`;
     let code = `${INDENT}scene ${imageName}\n`;
     if (node.transition !== 'none') {
-      code += `${INDENT}with ${this.mapTransition(node.transition)}(${node.transitionDuration})\n`;
+      code += `${INDENT}with ${this.formatTransition(node.transition, node.transitionDuration)}\n`;
     }
     return code;
   }
@@ -365,9 +373,6 @@ export class Compiler {
     let code = `${INDENT}menu:\n`;
     for (const choice of node.choices) {
       const escapedText = this.escapeString(choice.text);
-      const targetLabel = choice.targetSceneId
-        ? this.resolveJumpTarget(choice.targetSceneId)
-        : 'start';
 
       // 校验跳转目标
       if (choice.targetSceneId) {
@@ -381,7 +386,11 @@ export class Compiler {
         code += `${INDENT}${INDENT}"${escapedText}":\n`;
       }
       code += this.compileChoiceEffects(choice.variableEffects, node.id, sceneId, 3);
-      code += `${INDENT.repeat(3)}jump ${targetLabel}\n`;
+      // 仅当明确指定了跳转目标时才生成 jump，否则 fall-through 退出 menu
+      if (choice.targetSceneId) {
+        const targetLabel = this.resolveJumpTarget(choice.targetSceneId);
+        code += `${INDENT.repeat(3)}jump ${targetLabel}\n`;
+      }
     }
     return code;
   }
@@ -420,8 +429,7 @@ export class Compiler {
   private compileJumpLabel(node: JumpLabelNode, sceneId: string): string {
     if (node.subType === 'label') {
       const labelName = this.sanitizeLabel(node.labelName || 'label_1');
-      // 记录内部 label 以便后续 jump 校验
-      this.innerLabels.add(labelName);
+      // innerLabels 已在 compileScene 开头预先收集，此处无需重复添加
       return `${INDENT}label ${labelName}:\n`;
     } else if (node.subType === 'jump') {
       if (!node.targetLabel || !node.targetLabel.trim()) {
@@ -473,8 +481,18 @@ export class Compiler {
       if (asset.type === 'background') {
         const name = `bg_${this.sanitizeName(asset.fileName)}`;
         code += `image ${name} = "images/${escapedFileName}"\n`;
-      } else if (asset.type === 'sprite' && asset.characterId && asset.emotion) {
-        code += `image ${asset.characterId} ${asset.emotion} = "images/${escapedFileName}"\n`;
+      } else if (asset.type === 'sprite') {
+        if (asset.characterId && asset.emotion) {
+          // 标准立绘声明：角色名 表情名
+          code += `image ${asset.characterId} ${asset.emotion} = "images/${escapedFileName}"\n`;
+        } else if (asset.characterId) {
+          // 有角色名无表情名：用角色名作为基础 image 声明
+          code += `image ${asset.characterId} = "images/${escapedFileName}"\n`;
+        } else {
+          // 无角色信息：用文件名生成声明
+          const name = `sprite_${this.sanitizeName(asset.fileName)}`;
+          code += `image ${name} = "images/${escapedFileName}"\n`;
+        }
       }
     }
     return code + '\n';
@@ -512,13 +530,13 @@ define gui.name_text_color = "${meta.themeColor}"
 `;
   }
 
-  private generateVariablesRpy(variables: VariableDef[]): string {
-    let code = '# variables.rpy - 由影游工坊生成\n\n';
-    code += 'init python:\n';
-    for (const v of variables) {
-      code += `${INDENT}${v.name} = ${this.formatDefault(v)}\n`;
-    }
-    return code;
+  /**
+   * variables.rpy - 保留为自定义函数/常量的扩展文件。
+   * 变量初始值已由 script.rpy 中的 default 声明处理（支持存档回滚语义），
+   * 不再在 init python 中重复赋值，避免覆盖存档行为。
+   */
+  private generateVariablesRpy(_variables: VariableDef[]): string {
+    return '# variables.rpy - 由影游工坊生成\n# 变量初始值已在 script.rpy 中通过 default 声明\n# 可在此文件添加自定义 Python 函数和常量\n';
   }
 
   private generateScreensRpy(project: ProjectData): string {
@@ -536,15 +554,28 @@ screen say(who, what):
 
   // ===== 映射辅助 =====
 
-  private mapTransition(t: TransitionType): string {
-    const map: Record<TransitionType, string> = {
-      none: 'None',
-      dissolve: 'Dissolve',
-      fade: 'Fade',
-      pushright: 'PushRight',
-      wipeleft: 'WipeLeft',
-    };
-    return map[t] || 'Dissolve';
+  /**
+   * 将过渡类型映射为 Ren'Py 过渡表达式。
+   * - dissolve/fade: 支持 Duration 参数
+   * - pushright/wipeleft: Ren'Py 小写内置过渡，不接受 Duration 参数
+   */
+  private formatTransition(t: TransitionType, duration: number): string {
+    switch (t) {
+      case 'none':
+        return 'None';
+      case 'dissolve':
+        return `Dissolve(${duration})`;
+      case 'fade':
+        // Ren'Py Fade 工厂需要 3 个参数: Fade(out_time, hold_time, in_time)
+        return `Fade(${duration}, 0, ${duration})`;
+      case 'pushright':
+        // Ren'Py 小写内置过渡，不支持 Duration 参数
+        return 'pushright';
+      case 'wipeleft':
+        return 'wipeleft';
+      default:
+        return `Dissolve(${duration})`;
+    }
   }
 
   private mapPosition(pos: string): string {

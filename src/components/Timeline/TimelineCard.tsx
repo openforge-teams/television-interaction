@@ -9,6 +9,18 @@ import { Icon } from '@/components/ui';
 import { useProjectStore } from '@/stores/projectStore';
 import type { SceneNode } from '@/types';
 
+/** 节点类型中文映射 */
+const NODE_TYPE_LABELS: Record<SceneNode['type'], string> = {
+  background: '背景',
+  sprite: '立绘',
+  dialogue: '对话',
+  video: '视频',
+  audio: '音频',
+  choice: '选项',
+  jump_label: '跳转/标签',
+  variable_op: '变量',
+};
+
 interface TimelineCardProps {
   node: SceneNode;
   isSelected: boolean;
@@ -133,7 +145,7 @@ export function TimelineCard({ node, isSelected, onSelect, onDelete }: TimelineC
         >
           <Icon name={icon} size={14} className="text-brand-300" />
         </span>
-        <span className="text-2xs uppercase text-surface-400 flex-shrink-0">{node.type}</span>
+        <span className="text-2xs text-surface-400 flex-shrink-0">{NODE_TYPE_LABELS[node.type]}</span>
       </div>
       <div className="text-xs text-surface-100 truncate mt-0.5">{summary}</div>
 

@@ -39,13 +39,16 @@ export function Toolbar({ onBackToLauncher }: ToolbarProps) {
   const { undo, redo, canUndo, canRedo } = useUndoRedo();
 
   const currentSceneId = data.meta.currentSceneId;
+  const selectNode = useUIStore((s) => s.selectNode);
 
   const handleAddNode = (type: SceneNode['type']) => {
     if (!currentSceneId) {
       toast.warning('请先选择一个场景');
       return;
     }
-    addNode(currentSceneId, type);
+    const nodeId = addNode(currentSceneId, type);
+    // 自动选中新添加的节点，以便属性检查器立即显示
+    if (nodeId) selectNode(nodeId);
     toast.success(`已添加${NODE_TYPES.find((n) => n.type === type)?.label}节点`);
   };
 

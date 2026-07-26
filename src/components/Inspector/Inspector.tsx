@@ -28,6 +28,18 @@ import type {
   VariableType,
 } from '@/types';
 
+/** 节点类型中文映射 */
+const NODE_TYPE_LABELS: Record<SceneNode['type'], string> = {
+  background: '背景',
+  sprite: '立绘',
+  dialogue: '对话',
+  video: '视频',
+  audio: '音频',
+  choice: '选项',
+  jump_label: '跳转/标签',
+  variable_op: '变量',
+};
+
 // ===== 通用字段组件 =====
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -80,7 +92,7 @@ export function Inspector() {
         </span>
         {node && (
           <span className="text-2xs text-surface-500">
-            {node.type} · {node.id.slice(0, 8)}
+            {NODE_TYPE_LABELS[node.type]} · {node.id.slice(0, 8)}
           </span>
         )}
       </div>

@@ -229,7 +229,11 @@ export function AssetLibrary() {
       toast.warning('文件名不能为空');
       return;
     }
-    updateAsset(renamingId, { fileName: trimmed });
+    // 同步更新 fileName 和 relativePath，保持一致性
+    updateAsset(renamingId, {
+      fileName: trimmed,
+      relativePath: `assets/${renamingId}_${trimmed}`,
+    });
     toast.success('已重命名');
     setRenamingId(null);
     setRenameValue('');

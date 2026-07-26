@@ -328,13 +328,15 @@ export async function exportProjectPackage(
   if (variablesRpy) renpyFolder?.file('variables.rpy', variablesRpy);
   if (screensRpy) renpyFolder?.file('screens.rpy', screensRpy);
 
-  // 3. 素材文件
+  // 3. 素材文件（用 asset.id 作为文件名，避免重名覆盖）
   const assetsFolder = zip.folder('assets');
   const blobs = await getAllAssetBlobs();
   for (const asset of data.assets) {
     const blob = blobs.get(asset.id);
     if (blob) {
-      assetsFolder?.file(asset.fileName, blob);
+      // 使用 asset.id 作为主文件名，扩展名从原文件名提取，确保唯一
+      const ext = asset.fileName.includes('.') ? '.' + asset.fileName.split('.').pop() : '';
+      assetsFolder?.file(`${asset.id}${ext}`, blob);
     }
   }
 
@@ -421,9 +423,13 @@ export async function importProjectPackage(file: File): Promise<ProjectData | nu
     for (const entry of entries) {
       try {
         const blob = await entry.async('blob');
-        const fileName = entry.name.replace('assets/', '');
-        // 找到对应的 asset entry
-        const assetEntry = data.assets.find((a) => a.fileName === fileName);
+        const zipFileName = entry.name.replace('assets/', '');
+        // 文件名格式为 {assetId}{.ext}，提取 assetId
+        const dotIdx = zipFileName.lastIndexOf('.');
+        const assetIdFromZip = dotIdx > 0 ? zipFileName.substring(0, dotIdx) : zipFileName;
+        // 按 assetId 匹配（优先），兼容旧版按 fileName 匹配
+        const assetEntry = data.assets.find((a) => a.id === assetIdFromZip)
+          || data.assets.find((a) => a.fileName === zipFileName);
         if (assetEntry) {
           await saveAssetBlob(assetEntry.id, blob);
         }

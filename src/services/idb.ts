@@ -48,6 +48,8 @@ function tx<T>(
         const req = fn(os);
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
+        transaction.onabort = () => reject(transaction.error || new Error('事务被中止'));
+        transaction.onerror = () => reject(transaction.error || new Error('事务错误'));
       })
   );
 }
@@ -66,6 +68,8 @@ function txVoid(
         const req = fn(os);
         req.onsuccess = () => resolve();
         req.onerror = () => reject(req.error);
+        transaction.onabort = () => reject(transaction.error || new Error('事务被中止'));
+        transaction.onerror = () => reject(transaction.error || new Error('事务错误'));
       })
   );
 }
@@ -87,6 +91,8 @@ export async function getAssetBlob(assetId: string): Promise<Blob | null> {
 
 export async function deleteAssetBlob(assetId: string): Promise<void> {
   await txVoid(STORE_ASSETS, 'readwrite', (s) => s.delete(assetId));
+  // 同时清理 URL 缓存，防止内存泄漏
+  revokeAssetURL(assetId);
 }
 
 export async function getAllAssetBlobs(): Promise<Map<string, Blob>> {

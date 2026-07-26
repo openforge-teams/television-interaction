@@ -383,15 +383,30 @@ export async function exportRenpyProject(
  * 恢复项目数据和所有素材到 IndexedDB
  */
 export async function importProjectPackage(file: File): Promise<ProjectData | null> {
-  const zip = await JSZip.loadAsync(file);
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(file);
+  } catch {
+    throw new Error('无法读取项目文件，请确认文件是有效的 .yypkg 或 .zip 格式');
+  }
 
   // 1. 读取项目数据
   const projectFile = zip.file('project.json');
   if (!projectFile) {
     throw new Error('无效的项目文件：缺少 project.json');
   }
-  const projectJson = await projectFile.async('text');
-  const data = JSON.parse(projectJson) as ProjectData;
+  let data: ProjectData;
+  try {
+    const projectJson = await projectFile.async('text');
+    data = JSON.parse(projectJson) as ProjectData;
+  } catch {
+    throw new Error('项目数据损坏：无法解析 project.json');
+  }
+
+  // 校验基本结构
+  if (!data.meta || !data.scenes || !data.assets) {
+    throw new Error('项目数据结构不完整');
+  }
 
   // 2. 清空旧的 IndexedDB 素材
   await clearAllAssets();
@@ -404,12 +419,17 @@ export async function importProjectPackage(file: File): Promise<ProjectData | nu
       (f) => !f.dir && f.name.startsWith('assets/')
     );
     for (const entry of entries) {
-      const blob = await entry.async('blob');
-      const fileName = entry.name.replace('assets/', '');
-      // 找到对应的 asset entry
-      const assetEntry = data.assets.find((a) => a.fileName === fileName);
-      if (assetEntry) {
-        await saveAssetBlob(assetEntry.id, blob);
+      try {
+        const blob = await entry.async('blob');
+        const fileName = entry.name.replace('assets/', '');
+        // 找到对应的 asset entry
+        const assetEntry = data.assets.find((a) => a.fileName === fileName);
+        if (assetEntry) {
+          await saveAssetBlob(assetEntry.id, blob);
+        }
+      } catch {
+        // 跳过无法读取的素材文件
+        console.warn(`跳过无法读取的素材: ${entry.name}`);
       }
     }
   }

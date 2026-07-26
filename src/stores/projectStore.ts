@@ -19,6 +19,7 @@ import {
   createNodeByType,
   createNodeFromAsset,
 } from '@/types/factory';
+import { deleteAssetBlob } from '@/services/idb';
 
 interface ProjectStoreState {
   // 数据
@@ -301,22 +302,43 @@ export const useProjectStore = create<ProjectStoreState>()(
           const oldTrack = node.trackIndex;
           const oldPos = node.position;
 
+          // 先移动目标节点
           let updatedNodes = sc.nodes.map((n) => {
             if (n.id === nodeId) return { ...n, trackIndex: newTrack, position: newPosition };
             return n;
           });
 
-          // 修复旧轨道的 position
-          updatedNodes = updatedNodes.map((n) => {
-            if (n.id === nodeId) return n;
-            if (n.trackIndex === oldTrack && n.position > oldPos) {
-              return { ...n, position: n.position - 1 };
-            }
-            if (n.trackIndex === newTrack && n.position >= newPosition && n.id !== nodeId) {
-              return { ...n, position: n.position + 1 };
-            }
-            return n;
-          });
+          if (oldTrack === newTrack) {
+            // 同轨道移动：需要根据方向调整中间节点的位置
+            updatedNodes = updatedNodes.map((n) => {
+              if (n.id === nodeId) return n;
+              if (n.trackIndex !== oldTrack) return n;
+              if (oldPos < newPosition) {
+                // 向下移动：中间节点（oldPos < pos <= newPosition）上移一位
+                if (n.position > oldPos && n.position <= newPosition) {
+                  return { ...n, position: n.position - 1 };
+                }
+              } else if (oldPos > newPosition) {
+                // 向上移动：中间节点（newPosition <= pos < oldPos）下移一位
+                if (n.position >= newPosition && n.position < oldPos) {
+                  return { ...n, position: n.position + 1 };
+                }
+              }
+              return n;
+            });
+          } else {
+            // 跨轨道移动：旧轨道上方节点下移，新轨道及上方节点上移
+            updatedNodes = updatedNodes.map((n) => {
+              if (n.id === nodeId) return n;
+              if (n.trackIndex === oldTrack && n.position > oldPos) {
+                return { ...n, position: n.position - 1 };
+              }
+              if (n.trackIndex === newTrack && n.position >= newPosition) {
+                return { ...n, position: n.position + 1 };
+              }
+              return n;
+            });
+          }
 
           return {
             data: {
@@ -365,14 +387,17 @@ export const useProjectStore = create<ProjectStoreState>()(
           isDirty: true,
         })),
 
-      deleteAsset: (assetId) =>
+      deleteAsset: (assetId) => {
+        // 异步清理 IndexedDB 中的 Blob 数据和 URL 缓存
+        deleteAssetBlob(assetId).catch(() => { /* noop */ });
         set((s) => ({
           data: {
             ...s.data,
             assets: s.data.assets.filter((a) => a.id !== assetId),
           },
           isDirty: true,
-        })),
+        }));
+      },
 
       getAsset: (assetId) => get().data.assets.find((a) => a.id === assetId),
 

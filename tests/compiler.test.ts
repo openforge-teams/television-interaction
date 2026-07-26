@@ -146,7 +146,7 @@ describe('Compiler', () => {
     const sceneId = project.meta.currentSceneId!;
     project.scenes[sceneId].nodes.push(audio);
     const result = compiler.compileProject(project);
-    expect(result.scriptRpy).toContain('play music "bgm_main.mp3" fadein 2');
+    expect(result.scriptRpy).toContain('play music "audio/bgm_main.mp3" fadein 2');
   });
 
   it('应正确编译音频节点（停止音乐）', () => {

@@ -44,6 +44,7 @@ export class Compiler {
   private issues: CompileIssue[] = [];
   private assetMap: Map<string, AssetEntry> = new Map();
   private variableNames: Set<string> = new Set();
+  private characterIds: Set<string> = new Set();
   private sceneLabels: Set<string> = new Set();
   /** 场景 ID -> 场景名的映射，用于将 targetSceneId（UUID）解析为场景名 */
   private sceneIdToName: Map<string, string> = new Map();
@@ -60,6 +61,7 @@ export class Compiler {
     this.sceneIdToName = new Map();
     this.assetMap = new Map(project.assets.map((a) => [a.id, a]));
     this.variableNames = new Set(project.variables.map((v) => v.name));
+    this.characterIds = new Set(project.characters.map((c) => c.id));
 
     // 收集所有场景 label 名，并建立 ID->name 映射
     for (const scene of Object.values(project.scenes)) {
@@ -226,6 +228,16 @@ export class Compiler {
       });
       return `${INDENT}# [警告: 立绘节点未指定角色]\n`;
     }
+    // 校验角色定义是否存在
+    const charExists = this.characterIds.has(node.characterId);
+    if (!charExists) {
+      this.issues.push({
+        severity: 'warning',
+        message: `角色未定义: ${node.characterId}，生成的 show 语句可能无效`,
+        nodeId: node.id,
+        sceneId,
+      });
+    }
     if (node.visible) {
       let code = `${INDENT}show ${node.characterId}`;
       if (node.emotion) code += ` ${node.emotion}`;
@@ -253,7 +265,8 @@ export class Compiler {
     if (node.voiceAssetId) {
       const voiceAsset = this.assetMap.get(node.voiceAssetId);
       if (voiceAsset) {
-        code = `${INDENT}voice "audio/${voiceAsset.fileName}"\n` + code;
+        const escapedVoice = this.escapeString(voiceAsset.fileName);
+        code = `${INDENT}voice "audio/${escapedVoice}"\n` + code;
       }
     }
     // 自动推进
@@ -274,7 +287,8 @@ export class Compiler {
       });
       return `${INDENT}# [错误: 视频素材缺失]\n`;
     }
-    let code = `${INDENT}$ renpy.movie_cutscene("images/${asset.fileName}")\n`;
+    const escapedFileName = this.escapeString(asset.fileName);
+    let code = `${INDENT}$ renpy.movie_cutscene("video/${escapedFileName}")\n`;
     return code;
   }
 
@@ -289,15 +303,15 @@ export class Compiler {
       });
       return `${INDENT}# [错误: 音频素材缺失]\n`;
     }
-    const fileName = asset?.fileName || '';
+    const fileName = asset ? this.escapeString(asset.fileName) : '';
     if (node.action === 'play') {
       if (node.audioType === 'bgm') {
-        let code = `${INDENT}play music "${fileName}"`;
+        let code = `${INDENT}play music "audio/${fileName}"`;
         if (node.fadeIn > 0) code += ` fadein ${node.fadeIn}`;
         code += '\n';
         return code;
       } else {
-        let code = `${INDENT}play sound "${fileName}"`;
+        let code = `${INDENT}play sound "audio/${fileName}"`;
         if (node.fadeIn > 0) code += ` fadein ${node.fadeIn}`;
         code += '\n';
         return code;
@@ -388,6 +402,16 @@ export class Compiler {
           sceneId,
         });
       }
+      // 检查除零
+      if (effect.operation === 'divide' && (effect.value === 0 || effect.value === '0')) {
+        this.issues.push({
+          severity: 'error',
+          message: `除零错误: 变量 ${effect.variableName} 除以零`,
+          nodeId,
+          sceneId,
+        });
+        continue;
+      }
       code += `${INDENT.repeat(depth)}$ ${effect.variableName} ${this.opToSymbol(effect.operation)} ${this.formatValue(effect.value)}\n`;
     }
     return code;
@@ -427,6 +451,16 @@ export class Compiler {
         sceneId,
       });
     }
+    // 检查除零
+    if (node.operation === 'divide' && (node.value === 0 || node.value === '0')) {
+      this.issues.push({
+        severity: 'error',
+        message: `除零错误: 变量 ${node.variableName} 除以零`,
+        nodeId: node.id,
+        sceneId,
+      });
+      return `${INDENT}# [错误: 除零操作]\n`;
+    }
     return `${INDENT}$ ${node.variableName} ${this.opToSymbol(node.operation)} ${this.formatValue(node.value)}\n`;
   }
 
@@ -435,11 +469,12 @@ export class Compiler {
   private generateImageDeclarations(project: ProjectData): string {
     let code = '# ===== 图片声明 =====\n';
     for (const asset of project.assets) {
+      const escapedFileName = this.escapeString(asset.fileName);
       if (asset.type === 'background') {
         const name = `bg_${this.sanitizeName(asset.fileName)}`;
-        code += `image ${name} = "images/${asset.fileName}"\n`;
+        code += `image ${name} = "images/${escapedFileName}"\n`;
       } else if (asset.type === 'sprite' && asset.characterId && asset.emotion) {
-        code += `image ${asset.characterId} ${asset.emotion} = "images/${asset.fileName}"\n`;
+        code += `image ${asset.characterId} ${asset.emotion} = "images/${escapedFileName}"\n`;
       }
     }
     return code + '\n';
@@ -448,7 +483,9 @@ export class Compiler {
   private generateCharacterDeclarations(characters: CharacterDef[]): string {
     let code = '# ===== 角色声明 =====\n';
     for (const char of characters) {
-      code += `define ${char.id} = Character("${char.displayName}", color="${char.color}")\n`;
+      const escapedName = this.escapeString(char.displayName);
+      const escapedColor = this.escapeString(char.color);
+      code += `define ${char.id} = Character("${escapedName}", color="${escapedColor}")\n`;
     }
     return code + '\n';
   }

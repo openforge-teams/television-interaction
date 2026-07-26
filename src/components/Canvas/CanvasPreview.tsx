@@ -93,6 +93,11 @@ export function CanvasPreview() {
       if (app) {
         try { app.destroy(true, { children: true }); } catch { /* noop */ }
       }
+      // 清理纹理缓存，防止 GPU 内存泄漏
+      textureCacheRef.current.forEach((texture) => {
+        try { texture.destroy(true); } catch { /* noop */ }
+      });
+      textureCacheRef.current.clear();
       appRef.current = null;
       stageRef.current = null;
       setAppReady(false);
@@ -182,7 +187,11 @@ export function CanvasPreview() {
     const stage = stageRef.current;
     const app = appRef.current;
     if (!stage || !app) return;
-    stage.removeChildren();
+    // 销毁旧子元素以防止 GPU 内存泄漏
+    const removed = stage.removeChildren();
+    removed.forEach((child) => {
+      try { child.destroy(); } catch { /* noop */ }
+    });
 
     const W = resolution.width;
     const H = resolution.height;

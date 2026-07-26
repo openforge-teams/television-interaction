@@ -93,7 +93,7 @@ describe('ProjectStore 稳定性修复验证', () => {
       defaultFont: 'Microsoft YaHei',
       themeColor: '#FF0000',
     });
-    store.setProjectPath('/test/project');
+    // 浏览器端无需 projectPath
 
     // 重新获取 store 以确保读取最新状态
     store = useProjectStore.getState();
@@ -107,6 +107,5 @@ describe('ProjectStore 稳定性修复验证', () => {
     expect(data.meta.resolution).toEqual({ width: 1920, height: 1080 });
     expect(data.meta.defaultFont).toBe('Microsoft YaHei');
     expect(data.meta.themeColor).toBe('#FF0000');
-    expect(store.projectPath).toBe('/test/project');
   });
 });

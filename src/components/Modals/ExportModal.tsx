@@ -8,7 +8,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { toast } from '@/stores/toastStore';
 import { compiler, type CompileIssue } from '@/services/compiler';
-import { exportRenpyProject } from '@/services/fileService';
+import { exportProjectPackage } from '@/services/fileService';
 
 type Platform = 'Windows' | 'macOS' | 'Linux' | 'Web';
 
@@ -19,7 +19,6 @@ export function ExportModal() {
   const setExportProgress = useUIStore((s) => s.setExportProgress);
 
   const data = useProjectStore((s) => s.data);
-  const projectPath = useProjectStore((s) => s.projectPath);
 
   const [platform, setPlatform] = useState<Platform>('Windows');
   const [includeSDK, setIncludeSDK] = useState(false);
@@ -79,15 +78,13 @@ export function ExportModal() {
         setExportProgress(step.pct);
       }
 
-      // 3. 调用文件服务导出
-      const exportDir = projectPath ? `${projectPath}/export/${platform}` : `./export/${platform}`;
-      await exportRenpyProject(
+      // 3. 打包导出为 ZIP 下载
+      await exportProjectPackage(
         data,
         result.scriptRpy,
         result.optionsRpy,
         result.variablesRpy,
-        result.screensRpy,
-        exportDir
+        result.screensRpy
       );
 
       toast.success(`已导出 ${platform} 工程（版本 ${version}）`);
@@ -193,7 +190,7 @@ export function ExportModal() {
         )}
 
         <p className="text-2xs text-surface-500">
-          导出目录：{projectPath ? `${projectPath}/export/${platform}` : `(未设置项目路径) ./export/${platform}`}
+          导出后将下载包含项目数据和 Ren'Py 脚本的 .yypkg 文件
         </p>
       </div>
     </Modal>

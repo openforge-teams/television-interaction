@@ -1,11 +1,12 @@
 /**
  * 画布实时预览 - 对应文档 4.4
  * 使用 PixiJS 8.x 渲染当前场景节点的可视化预览。
- * 浏览器环境无真实素材文件，所有视觉元素均以占位矩形/文字绘制。
+ * 从 IndexedDB 加载真实素材图片，找不到时使用占位矩形。
  */
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import { Application, Container, Graphics, Text } from 'pixi.js';
+import { Application, Container, Graphics, Text, Sprite, Texture, Assets } from 'pixi.js';
 import { useProjectStore } from '@/stores/projectStore';
+import { getAssetURL2 } from '@/services/fileService';
 import type {
   BackgroundNode,
   SpriteNode,
@@ -128,6 +129,53 @@ export function CanvasPreview() {
     return () => ro.disconnect();
   }, [resolution.width, resolution.height, appReady]);
 
+  // ===== 纹理缓存：assetId -> Texture =====
+  const textureCacheRef = useRef<Map<string, Texture>>(new Map());
+  const [textureVersion, setTextureVersion] = useState(0);
+
+  // 预加载当前场景中引用的素材纹理
+  useEffect(() => {
+    let cancelled = false;
+    const cache = textureCacheRef.current;
+    const assetIds = new Set<string>();
+
+    // 收集需要加载的 assetId
+    for (const node of nodes) {
+      if (node.type === 'background') {
+        if (node.assetId) assetIds.add(node.assetId);
+      } else if (node.type === 'sprite') {
+        // 立绘通过 characterId + emotion 查找素材
+        const asset = assets.find(
+          (a) => a.characterId === node.characterId && a.emotion === node.emotion
+        );
+        if (asset) assetIds.add(asset.id);
+      }
+    }
+
+    // 只加载未缓存的
+    const toLoad = Array.from(assetIds).filter((id) => !cache.has(id));
+    if (toLoad.length === 0) return;
+
+    (async () => {
+      for (const assetId of toLoad) {
+        const url = await getAssetURL2(assetId);
+        if (!url || cancelled) continue;
+        try {
+          const texture = await Assets.load(url);
+          if (cancelled) break;
+          cache.set(assetId, texture);
+        } catch {
+          // 加载失败，跳过
+        }
+      }
+      if (!cancelled) setTextureVersion((v) => v + 1);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [nodes, assets]);
+
   // ===== 节点变化重新渲染 =====
   // 使用 useCallback 稳定化 drawScene 引用
   const drawScene = useCallback(() => {
@@ -162,7 +210,7 @@ export function CanvasPreview() {
           break;
       }
     }
-  }, [nodes, characters, assets, themeColor, resolution]);
+  }, [nodes, characters, assets, themeColor, resolution, textureVersion]);
 
   useEffect(() => {
     if (!appReady) return;
@@ -174,15 +222,30 @@ export function CanvasPreview() {
     return characters.find((c) => c.id === id);
   }
 
-  /** 背景：全屏矩形，使用主题色占位 */
+  /** 背景：优先使用真实图片，否则使用主题色占位 */
   function drawBackground(node: BackgroundNode, W: number, H: number) {
     const stage = stageRef.current;
     if (!stage) return;
     const asset = assets.find((a) => a.id === node.assetId);
-    const g = new Graphics();
-    g.rect(0, 0, W, H).fill({ color: hexToNumber(themeColor, 0x3366cc) });
-    g.zIndex = 0;
-    stage.addChild(g);
+    const texture = asset ? textureCacheRef.current.get(asset.id) : null;
+
+    if (texture) {
+      // 真实图片背景：等比缩放铺满
+      const sprite = new Sprite(texture);
+      const scale = Math.max(W / texture.width, H / texture.height);
+      sprite.width = texture.width * scale;
+      sprite.height = texture.height * scale;
+      sprite.x = (W - sprite.width) / 2;
+      sprite.y = (H - sprite.height) / 2;
+      sprite.zIndex = 0;
+      stage.addChild(sprite);
+    } else {
+      // 占位：主题色矩形
+      const g = new Graphics();
+      g.rect(0, 0, W, H).fill({ color: hexToNumber(themeColor, 0x3366cc) });
+      g.zIndex = 0;
+      stage.addChild(g);
+    }
 
     // 素材名标签
     const label = new Text({
@@ -195,7 +258,7 @@ export function CanvasPreview() {
     stage.addChild(label);
   }
 
-  /** 立绘：根据位置绘制占位矩形，带角色颜色边框，zIndex 由 zorder 决定 */
+  /** 立绘：优先使用真实图片，否则使用占位矩形，带角色颜色边框 */
   function drawSprite(node: SpriteNode, W: number, H: number) {
     const stage = stageRef.current;
     if (!stage) return;
@@ -203,28 +266,49 @@ export function CanvasPreview() {
     const char = getCharacter(node.characterId);
     const borderColor = hexToNumber(char?.color ?? '#94a3b8', 0x94a3b8);
 
-    const w = Math.floor(W * 0.22);
-    const h = Math.floor(H * 0.78);
-    const xRatio = SPRITE_X_RATIO[node.screenPosition] ?? 0.5;
-    const x = Math.floor(W * xRatio - w / 2);
-    const y = Math.floor(H * 0.1);
+    // 查找立绘素材
+    const asset = assets.find(
+      (a) => a.characterId === node.characterId && a.emotion === node.emotion
+    );
+    const texture = asset ? textureCacheRef.current.get(asset.id) : null;
 
-    const g = new Graphics();
-    g.rect(x, y, w, h)
-      .fill({ color: 0x1e293b, alpha: 0.85 })
-      .stroke({ color: borderColor, width: 3, alpha: 1 });
-    g.zIndex = node.zorder;
-    stage.addChild(g);
+    if (texture) {
+      // 真实立绘图片
+      const sprite = new Sprite(texture);
+      const targetH = Math.floor(H * 0.78);
+      const scale = targetH / texture.height;
+      sprite.width = texture.width * scale;
+      sprite.height = targetH;
+      const xRatio = SPRITE_X_RATIO[node.screenPosition] ?? 0.5;
+      sprite.x = Math.floor(W * xRatio - sprite.width / 2);
+      sprite.y = Math.floor(H * 0.1);
+      sprite.zIndex = node.zorder;
+      stage.addChild(sprite);
+    } else {
+      // 占位矩形
+      const w = Math.floor(W * 0.22);
+      const h = Math.floor(H * 0.78);
+      const xRatio = SPRITE_X_RATIO[node.screenPosition] ?? 0.5;
+      const x = Math.floor(W * xRatio - w / 2);
+      const y = Math.floor(H * 0.1);
 
-    const label = new Text({
-      text: `${(char?.displayName ?? node.characterId) || '?'}\n${node.emotion || ''}`,
-      style: { fill: 0xffffff, fontSize: 18, fontFamily: 'sans-serif', align: 'center' },
-    });
-    label.anchor.set(0.5);
-    label.x = x + w / 2;
-    label.y = y + h / 2;
-    label.zIndex = node.zorder + 0.1;
-    stage.addChild(label);
+      const g = new Graphics();
+      g.rect(x, y, w, h)
+        .fill({ color: 0x1e293b, alpha: 0.85 })
+        .stroke({ color: borderColor, width: 3, alpha: 1 });
+      g.zIndex = node.zorder;
+      stage.addChild(g);
+
+      const label = new Text({
+        text: `${(char?.displayName ?? node.characterId) || '?'}\n${node.emotion || ''}`,
+        style: { fill: 0xffffff, fontSize: 18, fontFamily: 'sans-serif', align: 'center' },
+      });
+      label.anchor.set(0.5);
+      label.x = x + w / 2;
+      label.y = y + h / 2;
+      label.zIndex = node.zorder + 0.1;
+      stage.addChild(label);
+    }
   }
 
   /** 对话：底部对话框（半透明黑 + 白字） */

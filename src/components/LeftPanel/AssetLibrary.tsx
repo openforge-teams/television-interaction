@@ -10,7 +10,7 @@ import { Icon, EmptyState } from '@/components/ui';
 import { useProjectStore } from '@/stores/projectStore';
 import { useUIStore, type AssetFilter } from '@/stores/uiStore';
 import { toast } from '@/stores/toastStore';
-import { selectFiles, importAssets } from '@/services/fileService';
+import { selectFiles, importAssetFiles, removeAsset } from '@/services/fileService';
 import type { AssetEntry, AssetType } from '@/types';
 
 const FILTER_TAGS: { id: AssetFilter; label: string }[] = [
@@ -122,11 +122,11 @@ export function AssetLibrary() {
     try {
       // 调用系统文件选择器
       const accept = TYPE_TO_ACCEPT[type];
-      const filePaths = await selectFiles(accept);
-      if (!filePaths || filePaths.length === 0) return;
+      const files = await selectFiles(accept);
+      if (!files || files.length === 0) return;
 
-      const projectPath = useProjectStore.getState().projectPath || '';
-      const entries = await importAssets(projectPath, filePaths);
+      // 导入到 IndexedDB，返回 AssetEntry 元数据
+      const entries = await importAssetFiles(files);
 
       if (entries.length === 0) {
         toast.warning('未选中可导入的素材文件');
@@ -142,9 +142,11 @@ export function AssetLibrary() {
     }
   };
 
-  const handleDelete = (assetId: string) => {
+  const handleDelete = async (assetId: string) => {
     const asset = assets.find((a) => a.id === assetId);
     deleteAsset(assetId);
+    // 同时清理 IndexedDB 中的素材 Blob
+    await removeAsset(assetId);
     if (selectedAssetId === assetId) selectAsset(null);
     toast.success(`已删除素材: ${asset?.fileName ?? ''}`);
     setContextMenu(null);

@@ -1,138 +1,76 @@
 /**
- * 文件服务 - 封装文件系统操作（Electron IPC 或浏览器降级）
- * 在浏览器环境中使用 localStorage 降级
+ * 文件服务 - 浏览器端文件管理
+ *
+ * 架构说明：
+ * 本应用是纯浏览器端应用，无法像桌面端那样自由访问本地文件系统。
+ * - 素材文件：导入时以 Blob 形式存入 IndexedDB，运行时通过 Object URL 使用
+ * - 项目数据：自动保存到 IndexedDB，无需选择路径
+ * - 导出：将项目数据 + 素材打包为 ZIP 文件下载
+ * - 导入：读取 ZIP 文件恢复项目和素材
  */
-import type { ProjectData } from '@/types';
+import JSZip from 'jszip';
+import type { ProjectData, AssetEntry, AssetType, AssetFormat } from '@/types';
+import {
+  saveAssetBlob,
+  deleteAssetBlob,
+  getAllAssetBlobs,
+  saveProjectToIDB,
+  loadProjectFromIDB,
+  deleteProjectFromIDB,
+  getMeta,
+  setMeta,
+  getAssetURL,
+  clearURLCache,
+  clearAllAssets,
+} from './idb';
 
-// 检测是否在 Electron 环境中
+// 检测是否在 Electron 环境中（仍保留 Electron 支持）
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
-// 最近项目存储 key
+// 最近项目存储
 const RECENT_PROJECTS_KEY = 'yingyou_recent_projects';
+const AUTOSAVE_KEY = 'autosave';
 
 export interface RecentProject {
   name: string;
-  path: string;
+  key: string; // IndexedDB 中的 key
   lastModified: string;
   thumbnail?: string;
 }
 
-/**
- * 获取最近项目列表
- */
-export function getRecentProjects(): RecentProject[] {
-  try {
-    const raw = localStorage.getItem(RECENT_PROJECTS_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as RecentProject[];
-  } catch {
-    return [];
-  }
+// ============ 最近项目列表 ============
+
+export async function getRecentProjects(): Promise<RecentProject[]> {
+  const list = await getMeta<RecentProject[]>(RECENT_PROJECTS_KEY);
+  return list ?? [];
 }
 
-/**
- * 添加/更新最近项目
- */
-export function addRecentProject(project: RecentProject): void {
-  const list = getRecentProjects().filter((p) => p.path !== project.path);
-  list.unshift(project);
-  // 最多 10 个
-  const trimmed = list.slice(0, 10);
-  localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(trimmed));
+async function addRecentProject(project: RecentProject): Promise<void> {
+  const list = await getRecentProjects();
+  const filtered = list.filter((p) => p.key !== project.key);
+  filtered.unshift(project);
+  await setMeta(RECENT_PROJECTS_KEY, filtered.slice(0, 20));
 }
 
-/**
- * 移除最近项目
- */
-export function removeRecentProject(path: string): void {
-  const list = getRecentProjects().filter((p) => p.path !== path);
-  localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(list));
+export async function removeRecentProject(key: string): Promise<void> {
+  const list = await getRecentProjects();
+  await setMeta(
+    RECENT_PROJECTS_KEY,
+    list.filter((p) => p.key !== key)
+  );
+  await deleteProjectFromIDB(key);
 }
 
-/**
- * 保存项目到文件
- * Electron 环境：写入磁盘；浏览器环境：写入 localStorage
- */
-export async function saveProject(data: ProjectData, path: string): Promise<void> {
-  // 保存操作与最近项目更新分离，避免更新失败误报保存失败
-  if (isElectron && window.electronAPI?.saveProject) {
-    await window.electronAPI.saveProject(data, path);
-  } else {
-    // 浏览器降级：用 localStorage
-    localStorage.setItem(`project_${path}`, JSON.stringify(data));
-  }
-  // 更新最近项目列表，失败不影响保存结果
-  try {
-    addRecentProject({
-      name: data.meta.name,
-      path,
-      lastModified: new Date().toISOString(),
-    });
-  } catch (e) {
-    console.warn('更新最近项目列表失败:', e);
-  }
-}
-
-/**
- * 加载项目文件
- */
-export async function loadProject(path: string): Promise<ProjectData | null> {
-  if (isElectron && window.electronAPI?.loadProject) {
-    return await window.electronAPI.loadProject(path);
-  } else {
-    const raw = localStorage.getItem(`project_${path}`);
-    if (!raw) return null;
-    return JSON.parse(raw) as ProjectData;
-  }
-}
-
-/**
- * 选择文件夹（新建项目保存路径）
- * Electron 环境：系统文件夹选择器
- * 浏览器环境：webkitdirectory 文件夹选择器
- */
-export async function selectFolder(): Promise<string | null> {
-  if (isElectron && window.electronAPI?.selectFolder) {
-    return await window.electronAPI.selectFolder();
-  }
-  // 浏览器降级：使用 input[webkitdirectory] 调用系统文件夹选择器
-  return new Promise((resolve) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.setAttribute('webkitdirectory', '');
-    input.setAttribute('directory', '');
-    input.style.position = 'fixed';
-    input.style.top = '-9999px';
-    input.style.opacity = '0';
-    document.body.appendChild(input);
-    input.addEventListener('change', () => {
-      document.body.removeChild(input);
-      if (input.files && input.files.length > 0) {
-        // webkitRelativePath 形如 "MyFolder/sub/file.png"，取顶层目录名
-        const relPath = input.files[0].webkitRelativePath || input.files[0].name;
-        const topDir = relPath.split('/')[0];
-        resolve(topDir || `browser_project_${Date.now()}`);
-      } else {
-        resolve(null);
-      }
-    });
-    input.addEventListener('cancel', () => {
-      document.body.removeChild(input);
-      resolve(null);
-    });
-    input.click();
-  });
-}
+// ============ 文件选择器 ============
 
 /**
  * 选择文件（素材导入）
- * Electron 环境：系统文件选择器
- * 浏览器环境：input[type=file] 文件选择器
- * @param accept 文件类型过滤，如 "image/png,image/jpeg"
+ * 使用系统文件选择器
+ * @param accept 文件类型过滤，如 ".png,.jpg,.jpeg"
  */
-export async function selectFiles(accept?: string): Promise<string[] | null> {
+export async function selectFiles(accept?: string): Promise<File[] | null> {
+  // Electron 环境
   if (isElectron && window.electronAPI?.selectFiles) {
-    // 将 accept MIME 映射为 Electron 扩展名过滤器
     let filters: { name: string; extensions: string[] }[] | undefined;
     if (accept) {
       const exts = accept
@@ -140,13 +78,18 @@ export async function selectFiles(accept?: string): Promise<string[] | null> {
         .map((a) => a.trim())
         .filter((a) => a.startsWith('.'))
         .map((a) => a.slice(1).toLowerCase());
-      if (exts.length > 0) {
-        filters = [{ name: '素材', extensions: exts }];
-      }
+      if (exts.length > 0) filters = [{ name: '素材', extensions: exts }];
     }
-    return await window.electronAPI.selectFiles(filters);
+    const paths = await window.electronAPI.selectFiles(filters);
+    if (!paths || paths.length === 0) return null;
+    // Electron 返回的是路径，无法直接转 File，走 IPC 导入
+    // 这里返回伪 File 对象，由 importAssets 处理
+    return paths.map((p) => {
+      const name = p.split(/[\\/]/).pop() || p;
+      return new File([], name);
+    });
   }
-  // 浏览器降级：使用 input[type=file] 调用系统文件选择器
+  // 浏览器环境：使用 input[type=file]
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -159,15 +102,7 @@ export async function selectFiles(accept?: string): Promise<string[] | null> {
     input.addEventListener('change', () => {
       document.body.removeChild(input);
       if (input.files && input.files.length > 0) {
-        // 浏览器环境下返回文件对象引用（通过 File.name 作为占位路径，
-        // 实际导入由 importAssetsBrowser 处理 File 对象）
-        const fileNames: string[] = [];
-        for (let i = 0; i < input.files.length; i++) {
-          fileNames.push(input.files[i].name);
-        }
-        // 将 File 对象暂存到全局，供 importAssetsBrowser 取用
-        (window as any).__pendingImportFiles = Array.from(input.files);
-        resolve(fileNames);
+        resolve(Array.from(input.files));
       } else {
         resolve(null);
       }
@@ -181,41 +116,61 @@ export async function selectFiles(accept?: string): Promise<string[] | null> {
 }
 
 /**
- * 导入素材文件
- * Electron 环境：调用主进程复制文件并返回 AssetEntry
- * 浏览器环境：基于已选择的 File 对象生成 AssetEntry（无实际文件复制）
+ * 选择单个 ZIP 文件（导入项目）
  */
-export async function importAssets(
-  projectPath: string,
-  filePaths: string[]
-): Promise<any[]> {
-  if (isElectron && window.electronAPI?.importAssets) {
-    return await window.electronAPI.importAssets(projectPath, filePaths);
-  }
-  // 浏览器降级：基于暂存的 File 对象生成素材条目
-  const pendingFiles: File[] = (window as any).__pendingImportFiles || [];
-  (window as any).__pendingImportFiles = null;
+export async function selectProjectFile(): Promise<File | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.yypkg,.zip';
+    input.style.position = 'fixed';
+    input.style.top = '-9999px';
+    input.style.opacity = '0';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      document.body.removeChild(input);
+      if (input.files && input.files.length > 0) {
+        resolve(input.files[0]);
+      } else {
+        resolve(null);
+      }
+    });
+    input.addEventListener('cancel', () => {
+      document.body.removeChild(input);
+      resolve(null);
+    });
+    input.click();
+  });
+}
 
-  const FORMAT_TO_TYPE: Record<string, string> = {
-    png: 'background',
-    jpg: 'background',
-    jpeg: 'background',
-    mp4: 'video',
-    webm: 'video',
-    ogg: 'bgm',
-    mp3: 'bgm',
-    wav: 'sfx',
-  };
+// ============ 素材导入 ============
 
-  const results: any[] = [];
-  for (const file of pendingFiles) {
-    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+const FORMAT_TO_TYPE: Record<string, AssetType> = {
+  png: 'background',
+  jpg: 'background',
+  jpeg: 'background',
+  mp4: 'video',
+  webm: 'video',
+  ogg: 'bgm',
+  mp3: 'bgm',
+  wav: 'sfx',
+};
+
+/**
+ * 导入素材文件到浏览器
+ * 将 File 对象存入 IndexedDB，返回 AssetEntry 元数据
+ */
+export async function importAssetFiles(
+  files: File[]
+): Promise<AssetEntry[]> {
+  const results: AssetEntry[] = [];
+
+  for (const file of files) {
+    const ext = file.name.split('.').pop()?.toLowerCase() as AssetFormat;
     const type = FORMAT_TO_TYPE[ext];
     if (!type) continue;
 
-    let subDir = 'images';
-    if (['mp4', 'webm'].includes(ext)) subDir = 'videos';
-    else if (['ogg', 'mp3', 'wav'].includes(ext)) subDir = 'audio';
+    const assetId = crypto.randomUUID();
 
     // 分析文件名提取元数据（角色名_表情）
     const baseName = file.name.replace(/\.[^.]+$/, '');
@@ -227,31 +182,144 @@ export async function importAssets(
       emotion = match[2];
     }
 
-    const isImage = type === 'background' || (characterId ? true : false);
-    const isVideo = type === 'video';
-    const isAudio = ['bgm', 'sfx', 'voice'].includes(type);
+    const actualType = characterId ? 'sprite' : type;
 
-    results.push({
-      id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random()}`,
+    // 存入 IndexedDB
+    await saveAssetBlob(assetId, file);
+
+    // 获取图片尺寸（如果是图片）
+    let resolution: { width: number; height: number } | undefined;
+    if (['png', 'jpg', 'jpeg'].includes(ext)) {
+      resolution = await getImageDimensions(file).catch(() => undefined);
+    }
+
+    const entry: AssetEntry = {
+      id: assetId,
       fileName: file.name,
-      relativePath: `${subDir}/${file.name}`,
-      type: characterId ? 'sprite' : type,
+      relativePath: `assets/${assetId}_${file.name}`,
+      type: actualType,
       format: ext,
       fileSize: file.size,
-      resolution: isImage || isVideo ? { width: 1280, height: 720 } : undefined,
-      duration: isVideo || isAudio ? Math.floor(Math.random() * 60) + 1 : undefined,
+      resolution,
       characterId,
       emotion,
       tags: [],
-      thumbnailPath: `thumbnails/${file.name}`,
+      thumbnailPath: `thumbnails/${assetId}`,
       importedAt: new Date().toISOString(),
-    });
+    };
+    results.push(entry);
   }
+
   return results;
 }
 
+/** 获取图片尺寸 */
+function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('图片加载失败'));
+    };
+    img.src = url;
+  });
+}
+
+/** 获取素材的 Object URL（用于预览/渲染） */
+export async function getAssetURL2(assetId: string): Promise<string | null> {
+  return getAssetURL(assetId);
+}
+
+/** 删除素材（同时清理 IndexedDB） */
+export async function removeAsset(assetId: string): Promise<void> {
+  await deleteAssetBlob(assetId);
+}
+
+// ============ 项目保存/加载 ============
+
 /**
- * 导出 Ren'Py 工程
+ * 自动保存项目到 IndexedDB
+ * 无需选择路径，自动持久化
+ */
+export async function saveProject(data: ProjectData): Promise<string> {
+  const key = AUTOSAVE_KEY;
+  await saveProjectToIDB(key, data);
+  await addRecentProject({
+    name: data.meta.name,
+    key,
+    lastModified: new Date().toISOString(),
+  });
+  return key;
+}
+
+/**
+ * 从 IndexedDB 加载自动保存的项目
+ */
+export async function loadProject(): Promise<ProjectData | null> {
+  return loadProjectFromIDB<ProjectData>(AUTOSAVE_KEY);
+}
+
+/**
+ * 加载指定项目（从最近列表）
+ */
+export async function loadProjectByKey(key: string): Promise<ProjectData | null> {
+  return loadProjectFromIDB<ProjectData>(key);
+}
+
+// ============ 项目导出（ZIP 下载） ============
+
+/**
+ * 导出项目为 ZIP 文件下载
+ * 包含 project.json + 所有素材文件 + Ren'Py 脚本
+ */
+export async function exportProjectPackage(
+  data: ProjectData,
+  scriptRpy?: string,
+  optionsRpy?: string,
+  variablesRpy?: string,
+  screensRpy?: string
+): Promise<void> {
+  const zip = new JSZip();
+
+  // 1. 项目数据
+  zip.file('project.json', JSON.stringify(data, null, 2));
+
+  // 2. Ren'Py 脚本（如果有）
+  const renpyFolder = zip.folder('renpy');
+  if (scriptRpy) renpyFolder?.file('script.rpy', scriptRpy);
+  if (optionsRpy) renpyFolder?.file('options.rpy', optionsRpy);
+  if (variablesRpy) renpyFolder?.file('variables.rpy', variablesRpy);
+  if (screensRpy) renpyFolder?.file('screens.rpy', screensRpy);
+
+  // 3. 素材文件
+  const assetsFolder = zip.folder('assets');
+  const blobs = await getAllAssetBlobs();
+  for (const asset of data.assets) {
+    const blob = blobs.get(asset.id);
+    if (blob) {
+      assetsFolder?.file(asset.fileName, blob);
+    }
+  }
+
+  // 4. 生成 ZIP 并下载
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(zipBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${data.meta.name || '项目'}.yypkg`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * 导出 Ren'Py 工程（兼容旧接口，Electron 桌面端写入磁盘）
  */
 export async function exportRenpyProject(
   data: ProjectData,
@@ -259,7 +327,7 @@ export async function exportRenpyProject(
   optionsRpy: string,
   variablesRpy: string,
   screensRpy: string,
-  exportDir: string
+  _exportDir: string
 ): Promise<string> {
   if (isElectron && window.electronAPI?.exportProject) {
     return await window.electronAPI.exportProject(
@@ -268,22 +336,65 @@ export async function exportRenpyProject(
       optionsRpy,
       variablesRpy,
       screensRpy,
-      exportDir
+      ''
     );
   }
-  // 浏览器降级：生成可下载的文本
-  const blob = new Blob([scriptRpy], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'script.rpy';
-  a.click();
-  URL.revokeObjectURL(url);
+  // 浏览器端：打包为 ZIP 下载
+  await exportProjectPackage(data, scriptRpy, optionsRpy, variablesRpy, screensRpy);
   return 'browser_download';
 }
 
+// ============ 项目导入（从 ZIP） ============
+
 /**
- * 启动预览
+ * 从 ZIP 文件导入项目
+ * 恢复项目数据和所有素材到 IndexedDB
+ */
+export async function importProjectPackage(file: File): Promise<ProjectData | null> {
+  const zip = await JSZip.loadAsync(file);
+
+  // 1. 读取项目数据
+  const projectFile = zip.file('project.json');
+  if (!projectFile) {
+    throw new Error('无效的项目文件：缺少 project.json');
+  }
+  const projectJson = await projectFile.async('text');
+  const data = JSON.parse(projectJson) as ProjectData;
+
+  // 2. 清空旧的 IndexedDB 素材
+  await clearAllAssets();
+  clearURLCache();
+
+  // 3. 恢复素材文件到 IndexedDB
+  const assetsFolder = zip.folder('assets');
+  if (assetsFolder) {
+    const entries = Object.values(zip.files).filter(
+      (f) => !f.dir && f.name.startsWith('assets/')
+    );
+    for (const entry of entries) {
+      const blob = await entry.async('blob');
+      const fileName = entry.name.replace('assets/', '');
+      // 找到对应的 asset entry
+      const assetEntry = data.assets.find((a) => a.fileName === fileName);
+      if (assetEntry) {
+        await saveAssetBlob(assetEntry.id, blob);
+      }
+    }
+  }
+
+  // 4. 保存到 IndexedDB
+  await saveProjectToIDB(AUTOSAVE_KEY, data);
+  await addRecentProject({
+    name: data.meta.name,
+    key: AUTOSAVE_KEY,
+    lastModified: new Date().toISOString(),
+  });
+
+  return data;
+}
+
+/**
+ * 启动预览（浏览器降级：显示生成的脚本）
  */
 export async function startPreview(
   data: ProjectData,
@@ -304,10 +415,16 @@ export async function startPreview(
     );
     return;
   }
-  // 浏览器降级：显示生成的脚本
-  console.log('=== 预览（浏览器降级模式）===');
-  console.log(scriptRpy);
-  alert("浏览器降级模式：已生成 script.rpy 到控制台。请在 Electron 环境中运行以启动 Ren'Py 预览。");
+  // 浏览器降级：在新窗口展示生成的脚本
+  const w = window.open('', '_blank');
+  if (w) {
+    w.document.write(`<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:monospace;padding:16px;">${scriptRpy.replace(/</g, '&lt;')}</pre>`);
+    w.document.title = 'Ren\'Py 预览 - script.rpy';
+  } else {
+    console.log('=== 预览（浏览器降级模式）===');
+    console.log(scriptRpy);
+    alert('预览已生成到控制台。请在 Electron 环境中运行以启动 Ren\'Py 预览。');
+  }
 }
 
 // TypeScript 全局类型声明

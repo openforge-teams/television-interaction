@@ -21,6 +21,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "adm-zip": "^0.5.12",
     "chokidar": "^3.6.0",
+    "jszip": "^3.10.1",
     "lowdb": "^7.0.1",
     "nanoid": "^5.0.4",
     "pixi.js": "^8.2.0",

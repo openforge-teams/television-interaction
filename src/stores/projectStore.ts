@@ -23,14 +23,12 @@ import {
 interface ProjectStoreState {
   // 数据
   data: ProjectData;
-  projectPath: string | null;
   isDirty: boolean;
 
   // 项目级操作
-  loadProject: (data: ProjectData, path: string) => void;
+  loadProject: (data: ProjectData) => void;
   newProject: (name: string) => void;
   updateMeta: (partial: Partial<ProjectMeta>) => void;
-  setProjectPath: (path: string | null) => void;
   markClean: () => void;
 
   // 场景操作
@@ -75,14 +73,13 @@ export const useProjectStore = create<ProjectStoreState>()(
   temporal(
     (set, get) => ({
       data: createEmptyProjectData('未命名项目'),
-      projectPath: null,
       isDirty: false,
 
-      loadProject: (data, path) => {
+      loadProject: (data) => {
         // 加载项目时清除撤销/重做历史，防止跨项目撤销
         const temporal = useProjectStore.temporal.getState();
         temporal.clear();
-        set({ data, projectPath: path, isDirty: false });
+        set({ data, isDirty: false });
         // set() 会产生一条历史记录，再次清除以确保完全干净
         temporal.clear();
       },
@@ -91,7 +88,7 @@ export const useProjectStore = create<ProjectStoreState>()(
         // 新建项目时清除撤销/重做历史，防止跨项目撤销
         const temporal = useProjectStore.temporal.getState();
         temporal.clear();
-        set({ data: createEmptyProjectData(name), projectPath: null, isDirty: false });
+        set({ data: createEmptyProjectData(name), isDirty: false });
         // set() 会产生一条历史记录，再次清除以确保完全干净
         temporal.clear();
       },
@@ -109,7 +106,6 @@ export const useProjectStore = create<ProjectStoreState>()(
           isDirty: true,
         })),
 
-      setProjectPath: (path) => set({ projectPath: path }),
       markClean: () => set({ isDirty: false }),
 
       addScene: (name) => {

@@ -29,7 +29,6 @@ const NODE_TYPES: { type: SceneNode['type']; label: string; icon: string }[] = [
 
 export function Toolbar({ onBackToLauncher }: ToolbarProps) {
   const data = useProjectStore((s) => s.data);
-  const projectPath = useProjectStore((s) => s.projectPath);
   const addNode = useProjectStore((s) => s.addNode);
   const markClean = useProjectStore((s) => s.markClean);
   const toggleLeftPanel = useUIStore((s) => s.toggleLeftPanel);
@@ -51,12 +50,8 @@ export function Toolbar({ onBackToLauncher }: ToolbarProps) {
   };
 
   const handleSave = async () => {
-    if (!projectPath) {
-      toast.warning('未设置项目路径');
-      return;
-    }
     try {
-      await saveProject(data, projectPath);
+      await saveProject(data);
       markClean();
       toast.success('项目已保存');
     } catch (e) {

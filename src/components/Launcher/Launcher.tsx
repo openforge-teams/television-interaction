@@ -1,43 +1,89 @@
 /**
- * 启动器窗口 - 对应文档 2.1
- * 800x600 居中显示，左侧最近项目列表，右侧新建/打开按钮
+ * 启动器窗口
+ * 左侧最近项目列表（从 IndexedDB 读取），右侧新建/导入项目
+ * 新建项目直接创建空项目，无需选择路径
+ * 导入项目从 .yypkg ZIP 文件恢复
  */
 import { useState, useEffect } from 'react';
 import { Icon, Modal, EmptyState } from '@/components/ui';
-import { getRecentProjects, removeRecentProject, loadProject, selectFolder } from '@/services/fileService';
-import type { RecentProject } from '@/services/fileService';
+import {
+  getRecentProjects,
+  removeRecentProject,
+  loadProjectByKey,
+  selectProjectFile,
+  importProjectPackage,
+  type RecentProject,
+} from '@/services/fileService';
 import { RESOLUTION_PRESETS, FONT_PRESETS } from '@/types';
 import { useProjectStore } from '@/stores/projectStore';
 import { toast } from '@/stores/toastStore';
 import type { ProjectData } from '@/types';
 
 interface LauncherProps {
-  onNewProject: (name: string, path: string) => void;
-  onOpenProject: (data: ProjectData, path: string) => void;
+  onEnterEditor: () => void;
 }
 
-export function Launcher({ onNewProject, onOpenProject }: LauncherProps) {
+export function Launcher({ onEnterEditor }: LauncherProps) {
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [showNewModal, setShowNewModal] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const refreshRecent = async () => {
+    const list = await getRecentProjects();
+    setRecentProjects(list);
+  };
 
   useEffect(() => {
-    setRecentProjects(getRecentProjects());
+    refreshRecent();
   }, []);
 
-  const handleOpenRecent = async (path: string) => {
+  const handleOpenRecent = async (key: string) => {
+    setLoading(true);
     try {
-      const data = await loadProject(path);
+      const data = await loadProjectByKey(key);
       if (data) {
-        onOpenProject(data, path);
+        useProjectStore.getState().loadProject(data);
+        onEnterEditor();
         toast.success(`已打开项目: ${data.meta.name}`);
       } else {
-        toast.error('项目文件不存在或已损坏');
-        removeRecentProject(path);
-        setRecentProjects(getRecentProjects());
+        toast.error('项目数据不存在或已损坏');
+        await removeRecentProject(key);
+        refreshRecent();
       }
     } catch (e) {
       toast.error('打开项目失败: ' + (e as Error).message);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const handleImportProject = async () => {
+    setLoading(true);
+    try {
+      const file = await selectProjectFile();
+      if (!file) {
+        setLoading(false);
+        return;
+      }
+      const data = await importProjectPackage(file);
+      if (data) {
+        useProjectStore.getState().loadProject(data);
+        onEnterEditor();
+        toast.success(`已导入项目: ${data.meta.name}`);
+        refreshRecent();
+      } else {
+        toast.error('导入失败：无法解析项目文件');
+      }
+    } catch (e) {
+      toast.error('导入项目失败: ' + (e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRemoveRecent = async (key: string) => {
+    await removeRecentProject(key);
+    refreshRecent();
   };
 
   return (
@@ -70,26 +116,24 @@ export function Launcher({ onNewProject, onOpenProject }: LauncherProps) {
               <div className="space-y-1">
                 {recentProjects.map((p) => (
                   <div
-                    key={p.path}
+                    key={p.key}
                     className="group flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-surface-700 cursor-pointer transition-colors"
-                    onClick={() => handleOpenRecent(p.path)}
+                    onClick={() => !loading && handleOpenRecent(p.key)}
                   >
                     <div className="w-10 h-10 rounded-md bg-surface-700 flex items-center justify-center flex-shrink-0">
                       <Icon name="folder" size={20} className="text-surface-400" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-surface-100 truncate">{p.name}</p>
-                      <p className="text-xs text-surface-500 truncate">{p.path}</p>
+                      <p className="text-xs text-surface-500 truncate">
+                        {new Date(p.lastModified).toLocaleString('zh-CN')}
+                      </p>
                     </div>
-                    <span className="text-xs text-surface-500 flex-shrink-0">
-                      {new Date(p.lastModified).toLocaleDateString('zh-CN')}
-                    </span>
                     <button
                       className="opacity-0 group-hover:opacity-100 text-surface-500 hover:text-red-400 transition-opacity p-1"
                       onClick={(e) => {
                         e.stopPropagation();
-                        removeRecentProject(p.path);
-                        setRecentProjects(getRecentProjects());
+                        handleRemoveRecent(p.key);
                       }}
                     >
                       <Icon name="x" size={14} />
@@ -109,33 +153,23 @@ export function Launcher({ onNewProject, onOpenProject }: LauncherProps) {
           </div>
 
           <button
-            className="w-64 h-20 rounded-xl bg-gradient-to-br from-brand-600 to-brand-800 hover:from-brand-500 hover:to-brand-700 flex flex-col items-center justify-center gap-1 transition-all shadow-lg hover:shadow-brand-500/20"
+            className="w-64 h-20 rounded-xl bg-gradient-to-br from-brand-600 to-brand-800 hover:from-brand-500 hover:to-brand-700 flex flex-col items-center justify-center gap-1 transition-all shadow-lg hover:shadow-brand-500/20 disabled:opacity-50"
             onClick={() => setShowNewModal(true)}
+            disabled={loading}
           >
             <Icon name="add" size={24} className="text-white" />
             <span className="text-base font-medium text-white">新建项目</span>
           </button>
 
           <button
-            className="w-64 h-16 rounded-xl bg-surface-700 hover:bg-surface-600 flex items-center justify-center gap-2 transition-colors"
-            onClick={async () => {
-              const path = await selectFolder();
-              if (path) {
-                try {
-                  const data = await loadProject(path);
-                  if (data) {
-                    onOpenProject(data, path);
-                  } else {
-                    toast.warning('该路径下未找到项目');
-                  }
-                } catch (e) {
-                  toast.error('打开失败: ' + (e as Error).message);
-                }
-              }
-            }}
+            className="w-64 h-16 rounded-xl bg-surface-700 hover:bg-surface-600 flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+            onClick={handleImportProject}
+            disabled={loading}
           >
             <Icon name="folder" size={20} className="text-surface-300" />
-            <span className="text-base font-medium text-surface-200">打开项目</span>
+            <span className="text-base font-medium text-surface-200">
+              {loading ? '导入中…' : '导入项目'}
+            </span>
           </button>
 
           <div className="mt-auto text-center">
@@ -147,7 +181,10 @@ export function Launcher({ onNewProject, onOpenProject }: LauncherProps) {
       <NewProjectModal
         open={showNewModal}
         onClose={() => setShowNewModal(false)}
-        onCreate={onNewProject}
+        onCreate={() => {
+          setShowNewModal(false);
+          onEnterEditor();
+        }}
       />
     </div>
   );
@@ -161,35 +198,23 @@ function NewProjectModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onCreate: (name: string, path: string) => void;
+  onCreate: () => void;
 }) {
   const [name, setName] = useState('未命名项目');
   const [author, setAuthor] = useState('');
   const [resolution, setResolution] = useState('1280x720');
   const [font, setFont] = useState(FONT_PRESETS[0]);
   const [themeColor, setThemeColor] = useState('#3366CC');
-  const [savePath, setSavePath] = useState('');
   const [error, setError] = useState('');
 
-  const handleSelectFolder = async () => {
-    const path = await selectFolder();
-    if (path) setSavePath(path);
-  };
-
   const handleCreate = () => {
-    // 验证项目名
     if (!/^[\w\u4e00-\u9fa5\- ]{1,50}$/.test(name)) {
       setError('项目名只能包含字母、数字、中文、连字符和空格，1-50 字符');
-      return;
-    }
-    if (!savePath) {
-      setError('请选择保存路径');
       return;
     }
 
     const [w, h] = resolution.split('x').map(Number);
 
-    // 使用 store 创建项目，然后立即应用用户配置
     const store = useProjectStore.getState();
     store.newProject(name);
     store.updateMeta({
@@ -198,11 +223,9 @@ function NewProjectModal({
       defaultFont: font,
       themeColor,
     });
-    store.setProjectPath(savePath);
 
-    onCreate(name, savePath);
+    onCreate();
     setError('');
-    onClose();
   };
 
   return (
@@ -274,20 +297,9 @@ function NewProjectModal({
           <span className="text-sm text-surface-300">{themeColor}</span>
         </div>
       </div>
-      <div>
-        <label className="label">保存路径 *</label>
-        <div className="flex gap-2">
-          <input
-            className="input flex-1"
-            value={savePath}
-            readOnly
-            placeholder="点击右侧选择文件夹..."
-          />
-          <button className="btn-secondary" onClick={handleSelectFolder}>
-            <Icon name="folder" size={16} /> 浏览
-          </button>
-        </div>
-      </div>
+      <p className="text-2xs text-surface-500">
+        项目将自动保存到浏览器，制作完成后可导出为文件。
+      </p>
     </Modal>
   );
 }

@@ -103,12 +103,18 @@ export function SceneNavigator() {
     }
     const newOrder = [...sceneOrder];
     const fromIdx = newOrder.indexOf(sourceId);
-    const toIdx = newOrder.indexOf(targetId);
+    let toIdx = newOrder.indexOf(targetId);
     if (fromIdx === -1 || toIdx === -1) {
       setDraggingId(null);
       setDragOverId(null);
       return;
     }
+    // 根据鼠标在卡片上的位置判断插入方向（左半部=前面，右半部=后面）
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const insertAfter = e.clientX > rect.left + rect.width / 2;
+    if (insertAfter) toIdx++;
+    // 调整：如果从前面移除，目标索引需要减1
+    if (fromIdx < toIdx) toIdx--;
     newOrder.splice(fromIdx, 1);
     newOrder.splice(toIdx, 0, sourceId);
     reorderScenes(newOrder);

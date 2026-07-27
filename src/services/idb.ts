@@ -18,7 +18,12 @@ function openDB(): Promise<IDBDatabase> {
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onerror = () => reject(req.error);
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onclose = () => { dbPromise = null; };
+      db.onversionchange = () => { db.close(); dbPromise = null; };
+      resolve(db);
+    };
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_ASSETS)) {
@@ -130,7 +135,13 @@ export async function saveProjectToIDB(key: string, data: unknown): Promise<void
 export async function loadProjectFromIDB<T>(key: string): Promise<T | null> {
   try {
     const result = await tx<string>(STORE_PROJECTS, 'readonly', (s) => s.get(key));
-    return result ? (JSON.parse(result) as T) : null;
+    if (!result) return null;
+    try {
+      return JSON.parse(result) as T;
+    } catch (parseErr) {
+      console.error('项目数据解析失败，数据可能已损坏:', parseErr);
+      return null;
+    }
   } catch {
     return null;
   }

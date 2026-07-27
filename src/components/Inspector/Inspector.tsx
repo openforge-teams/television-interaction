@@ -6,6 +6,7 @@
 import React from 'react';
 import { useProjectStore } from '@/stores/projectStore';
 import { useUIStore } from '@/stores/uiStore';
+import { toast } from '@/stores/toastStore';
 import { EmptyState } from '@/components/ui';
 import { v4 as uuidv4 } from 'uuid';
 import type {
@@ -553,6 +554,10 @@ function ChoiceForm({ node, sceneId, data, updateNode }: {
 
   // 变量效果操作
   const addEffect = (choiceId: string) => {
+    if (data.variables.length === 0) {
+      toast.warning('请先在变量管理中添加变量');
+      return;
+    }
     const effect: VariableEffect = {
       variableName: data.variables[0]?.name ?? '',
       operation: 'set',
@@ -680,7 +685,14 @@ function ChoiceForm({ node, sceneId, data, updateNode }: {
                     type="text"
                     className="input !py-1 text-2xs"
                     value={String(effect.value)}
-                    onChange={(e) => updateEffect(choice.id, ei, { value: e.target.value })}
+                    onChange={(e) => {
+                      const v = data.variables.find((x) => x.name === effect.variableName);
+                      let val: number | string | boolean = e.target.value;
+                      if (v?.type === 'integer') val = parseInt(e.target.value) || 0;
+                      else if (v?.type === 'float') val = parseFloat(e.target.value) || 0;
+                      else if (v?.type === 'boolean') val = e.target.value === 'true';
+                      updateEffect(choice.id, ei, { value: val });
+                    }}
                   />
                   <button
                     className="btn-ghost !py-0.5 !px-1 text-red-400"
@@ -773,7 +785,9 @@ function VariableOpForm({ node, sceneId, data, updateNode }: {
             const v = data.variables.find((x) => x.name === e.target.value);
             updateNode(sceneId, node.id, {
               variableName: e.target.value,
-              value: v ? v.initialValue : 0,
+              value: v
+                ? v.initialValue
+                : (varType === 'boolean' ? false : varType === 'string' ? '' : 0),
             });
           }}
         >
@@ -803,7 +817,7 @@ function VariableOpForm({ node, sceneId, data, updateNode }: {
           {varType === 'boolean' ? (
             <CheckField
               label="true"
-              checked={node.value === true || node.value === 'true'}
+              checked={node.value === true}
               onChange={(v) => updateNode(sceneId, node.id, { value: v })}
             />
           ) : varType === 'integer' || varType === 'float' ? (

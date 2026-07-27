@@ -12,6 +12,9 @@ import type {
   CharacterDef,
   VariableDef,
   AssetEntry,
+  ChoiceNode,
+  JumpLabelNode,
+  DialogueNode,
 } from '@/types';
 import {
   createEmptyProjectData,
@@ -136,10 +139,41 @@ export const useProjectStore = create<ProjectStoreState>()(
             s.data.meta.currentSceneId === sceneId
               ? sceneOrder[0] ?? null
               : s.data.meta.currentSceneId;
+
+          // 清理其他场景中 ChoiceItem 的 targetSceneId 引用
+          const cleanedScenes: Record<string, Scene> = {};
+          for (const [sid, scene] of Object.entries(scenes)) {
+            let hasChanges = false;
+            const cleaned = scene.nodes.map((n) => {
+              if (n.type === 'choice') {
+                const choiceNode = n as ChoiceNode;
+                const cleanedChoices = choiceNode.choices.map((c) =>
+                  c.targetSceneId === sceneId ? { ...c, targetSceneId: '' } : c
+                );
+                if (cleanedChoices.some((c, i) => c.targetSceneId !== choiceNode.choices[i].targetSceneId)) {
+                  hasChanges = true;
+                }
+                return { ...n, choices: cleanedChoices };
+              }
+              // jump_label 节点的 targetLabel 如果指向被删除场景名
+              if (n.type === 'jump_label' && (n as JumpLabelNode).subType === 'jump') {
+                const jn = n as JumpLabelNode;
+                if (jn.targetLabel === s.data.scenes[sceneId]?.name || jn.targetLabel === sceneId) {
+                  hasChanges = true;
+                  return { ...n, targetLabel: '' };
+                }
+              }
+              return n;
+            });
+            if (hasChanges) {
+              cleanedScenes[sid] = { ...scene, nodes: cleaned };
+            }
+          }
+
           return {
             data: {
               ...s.data,
-              scenes,
+              scenes: { ...scenes, ...cleanedScenes },
               meta: {
                 ...s.data.meta,
                 sceneOrder,
@@ -207,7 +241,7 @@ export const useProjectStore = create<ProjectStoreState>()(
               ...s.data,
               scenes: {
                 ...s.data.scenes,
-                [sceneId]: { ...sc, nodes: [...updatedNodes, node] },
+                [sceneId]: { ...sc, nodes: [...updatedNodes.slice(0, pos), node, ...updatedNodes.slice(pos)] },
               },
               meta: { ...s.data.meta, lastModified: new Date().toISOString() },
             },
@@ -243,7 +277,7 @@ export const useProjectStore = create<ProjectStoreState>()(
               ...s.data,
               scenes: {
                 ...s.data.scenes,
-                [sceneId]: { ...sc, nodes: [...updatedNodes, node] },
+                [sceneId]: { ...sc, nodes: [...updatedNodes.slice(0, pos), node, ...updatedNodes.slice(pos)] },
               },
               meta: { ...s.data.meta, lastModified: new Date().toISOString() },
             },
@@ -390,13 +424,29 @@ export const useProjectStore = create<ProjectStoreState>()(
       deleteAsset: (assetId) => {
         // 异步清理 IndexedDB 中的 Blob 数据和 URL 缓存
         deleteAssetBlob(assetId).catch(() => { /* noop */ });
-        set((s) => ({
-          data: {
-            ...s.data,
-            assets: s.data.assets.filter((a) => a.id !== assetId),
-          },
-          isDirty: true,
-        }));
+        set((s) => {
+          // 清理所有场景中引用该素材的节点
+          const updatedScenes: Record<string, Scene> = {};
+          for (const [sid, scene] of Object.entries(s.data.scenes)) {
+            const filtered = scene.nodes.filter((n) => {
+              if ('assetId' in n && (n as SceneNode & { assetId: string }).assetId === assetId) return false;
+              if ('voiceAssetId' in n && (n as DialogueNode).voiceAssetId === assetId) return false;
+              return true;
+            });
+            if (filtered.length !== scene.nodes.length) {
+              updatedScenes[sid] = { ...scene, nodes: filtered };
+            }
+          }
+          return {
+            data: {
+              ...s.data,
+              assets: s.data.assets.filter((a) => a.id !== assetId),
+              scenes: { ...s.data.scenes, ...updatedScenes },
+              meta: { ...s.data.meta, lastModified: new Date().toISOString() },
+            },
+            isDirty: true,
+          };
+        });
       },
 
       getAsset: (assetId) => get().data.assets.find((a) => a.id === assetId),
@@ -419,13 +469,36 @@ export const useProjectStore = create<ProjectStoreState>()(
         })),
 
       deleteCharacter: (charId) =>
-        set((s) => ({
-          data: {
-            ...s.data,
-            characters: s.data.characters.filter((c) => c.id !== charId),
-          },
-          isDirty: true,
-        })),
+        set((s) => {
+          // 清理所有场景中引用该角色的节点（SpriteNode.characterId, DialogueNode.speakerId）
+          const updatedScenes: Record<string, Scene> = {};
+          for (const [sid, scene] of Object.entries(s.data.scenes)) {
+            const filtered = scene.nodes.filter((n) => {
+              if ('characterId' in n && (n as SceneNode & { characterId: string }).characterId === charId) return false;
+              if ('speakerId' in n && (n as DialogueNode).speakerId === charId) return false;
+              return true;
+            });
+            if (filtered.length !== scene.nodes.length) {
+              updatedScenes[sid] = { ...scene, nodes: filtered };
+            }
+          }
+          // 清理素材中引用该角色的 characterId
+          const updatedAssets = s.data.assets.map((a) =>
+            ('characterId' in a && (a as AssetEntry & { characterId?: string }).characterId === charId)
+              ? { ...a, characterId: undefined }
+              : a
+          );
+          return {
+            data: {
+              ...s.data,
+              characters: s.data.characters.filter((c) => c.id !== charId),
+              scenes: { ...s.data.scenes, ...updatedScenes },
+              assets: updatedAssets,
+              meta: { ...s.data.meta, lastModified: new Date().toISOString() },
+            },
+            isDirty: true,
+          };
+        }),
 
       getCharacter: (charId) => get().data.characters.find((c) => c.id === charId),
 
@@ -447,20 +520,51 @@ export const useProjectStore = create<ProjectStoreState>()(
         })),
 
       deleteVariable: (name) =>
-        set((s) => ({
-          data: {
-            ...s.data,
-            variables: s.data.variables.filter((v) => v.name !== name),
-          },
-          isDirty: true,
-        })),
+        set((s) => {
+          // 清理所有场景中引用该变量的节点（VariableOpNode.variableName, ChoiceItem.variableEffects）
+          const updatedScenes: Record<string, Scene> = {};
+          for (const [sid, scene] of Object.entries(s.data.scenes)) {
+            const filtered = (scene.nodes.map((n) => {
+              if (n.type === 'variable_op' && (n as SceneNode & { variableName: string }).variableName === name) {
+                return null; // 标记删除
+              }
+              if (n.type === 'choice') {
+                const choiceNode = n as ChoiceNode;
+                const cleanedChoices = choiceNode.choices.map((c) => ({
+                  ...c,
+                  variableEffects: (c.variableEffects || []).filter((e) => e.variableName !== name),
+                }));
+                return { ...n, choices: cleanedChoices } as SceneNode;
+              }
+              return n;
+            }).filter((n): n is SceneNode => n !== null)) as SceneNode[];
+            if (filtered.length !== scene.nodes.length) {
+              updatedScenes[sid] = { ...scene, nodes: filtered };
+            } else {
+              // 检查 choice 效果是否有变化
+              const origNode = scene.nodes.find((n) => n.type === 'choice');
+              if (origNode) {
+                updatedScenes[sid] = { ...scene, nodes: filtered };
+              }
+            }
+          }
+          return {
+            data: {
+              ...s.data,
+              variables: s.data.variables.filter((v) => v.name !== name),
+              scenes: { ...s.data.scenes, ...updatedScenes },
+              meta: { ...s.data.meta, lastModified: new Date().toISOString() },
+            },
+            isDirty: true,
+          };
+        }),
 
       getProjectData: () => get().data,
     }),
     {
       // zundo 配置：限制历史步数为 50，排除非数据字段
       limit: 50,
-      partialize: (state) => ({ data: state.data }),
+      partialize: (state) => ({ data: state.data, isDirty: state.isDirty }),
       equality: (pastState, currentState) =>
         JSON.stringify(pastState.data) === JSON.stringify(currentState.data),
     }

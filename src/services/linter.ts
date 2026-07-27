@@ -12,7 +12,8 @@ function sanitizeLabel(name: string): string {
 
 /** 将 UUID 或场景名解析为 label 名（与 compiler 保持一致） */
 function resolveJumpTarget(targetIdOrName: string, sceneIdToName: Map<string, string>): string {
-  if (targetIdOrName.includes('-') && sceneIdToName.has(targetIdOrName)) {
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidPattern.test(targetIdOrName) && sceneIdToName.has(targetIdOrName)) {
     return sanitizeLabel(sceneIdToName.get(targetIdOrName)!);
   }
   return sanitizeLabel(targetIdOrName);
@@ -149,7 +150,7 @@ function lintNode(
       break;
 
     case 'audio':
-      if (node.action !== 'stop' && node.assetId && !ctx.assetIds.has(node.assetId)) {
+      if (node.action === 'play' && node.assetId && !ctx.assetIds.has(node.assetId)) {
         ctx.issues.push({
           severity: 'error',
           message: `音频素材引用不存在: ${node.assetId}`,
@@ -232,7 +233,7 @@ function lintNode(
               field: 'variableEffects',
             });
           }
-          if (effect.operation === 'divide' && effect.value === 0) {
+          if (effect.operation === 'divide' && Number(effect.value) === 0) {
             ctx.issues.push({
               severity: 'error',
               message: `变量「${effect.variableName}」除以零`,
@@ -255,7 +256,7 @@ function lintNode(
           field: 'variableName',
         });
       }
-      if (node.operation === 'divide' && node.value === 0) {
+      if (node.operation === 'divide' && Number(node.value) === 0) {
         ctx.issues.push({
           severity: 'error',
           message: `变量「${node.variableName}」除以零`,
@@ -266,16 +267,26 @@ function lintNode(
       break;
 
     case 'jump_label':
-      if (node.subType === 'jump' && node.targetLabel) {
-        const resolvedLabel = resolveJumpTarget(node.targetLabel, ctx.sceneIdToName);
-        if (!ctx.validLabels.has(resolvedLabel)) {
+      if (node.subType === 'jump') {
+        if (!node.targetLabel || !node.targetLabel.trim()) {
           ctx.issues.push({
             severity: 'warning',
-            message: `跳转目标可能不存在: ${node.targetLabel}`,
+            message: '跳转节点未指定目标，将跳转到 start',
             nodeId: node.id,
             sceneId,
             field: 'targetLabel',
           });
+        } else {
+          const resolvedLabel = resolveJumpTarget(node.targetLabel, ctx.sceneIdToName);
+          if (!ctx.validLabels.has(resolvedLabel)) {
+            ctx.issues.push({
+              severity: 'warning',
+              message: `跳转目标可能不存在: ${node.targetLabel}`,
+              nodeId: node.id,
+              sceneId,
+              field: 'targetLabel',
+            });
+          }
         }
       }
       break;

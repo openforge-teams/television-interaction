@@ -267,7 +267,7 @@ export interface TrackDef {
 }
 
 export const TRACKS: TrackDef[] = [
-  { index: 0, name: '背景', maxConcurrent: 1, acceptedTypes: ['background'] },
+  { index: 0, name: '背景/视频', maxConcurrent: 1, acceptedTypes: ['background', 'video'] },
   { index: 1, name: '立绘', maxConcurrent: 3, acceptedTypes: ['sprite'] },
   { index: 2, name: '对话', maxConcurrent: 1, acceptedTypes: ['dialogue'] },
   { index: 3, name: '音频', maxConcurrent: 3, acceptedTypes: ['audio'] },

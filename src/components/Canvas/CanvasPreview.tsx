@@ -157,6 +157,16 @@ export function CanvasPreview() {
       }
     }
 
+    // 清理不再需要的纹理（切换场景时释放旧纹理）
+    const toRemove: string[] = [];
+    cache.forEach((texture, key) => {
+      if (!assetIds.has(key)) {
+        try { texture.destroy(true); } catch { /* noop */ }
+        toRemove.push(key);
+      }
+    });
+    for (const key of toRemove) cache.delete(key);
+
     // 只加载未缓存的
     const toLoad = Array.from(assetIds).filter((id) => !cache.has(id));
     if (toLoad.length === 0) return;

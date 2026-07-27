@@ -4,6 +4,11 @@
  */
 import type { ProjectData, Scene, SceneNode } from '@/types';
 
+/** 与编译器一致的 sanitizeLabel 实现 */
+function sanitizeLabel(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '_').toLowerCase() || 'unnamed';
+}
+
 interface SortResult {
   sorted: Scene[];
   hasCycle: boolean;
@@ -25,16 +30,25 @@ function collectEdges(project: ProjectData): Map<string, Set<string>> {
     for (const node of scene.nodes) {
       if (node.type === 'choice') {
         for (const choice of node.choices ?? []) {
-          if (choice.targetSceneId && project.scenes[choice.targetSceneId]) {
-            edges.get(scene.id)!.add(choice.targetSceneId);
+          if (choice.targetSceneId) {
+            // 支持 UUID 和场景名两种匹配方式
+            const targetScene = project.scenes[choice.targetSceneId]
+              || Object.values(project.scenes).find(
+                (s) => sanitizeLabel(s.name) === sanitizeLabel(choice.targetSceneId)
+              );
+            if (targetScene) {
+              edges.get(scene.id)!.add(targetScene.id);
+            }
           }
         }
       }
       // jump_label 节点的 targetLabel 如果指向场景名
       if (node.type === 'jump_label' && node.subType === 'jump' && node.targetLabel) {
-        const target = Object.values(project.scenes).find(
-          (s) => s.name === node.targetLabel || s.id === node.targetLabel
-        );
+        const targetLabel = node.targetLabel as string;
+        const target = project.scenes[targetLabel]
+          || Object.values(project.scenes).find(
+            (s) => sanitizeLabel(s.name) === sanitizeLabel(targetLabel)
+          );
         if (target) {
           edges.get(scene.id)!.add(target.id);
         }

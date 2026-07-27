@@ -71,6 +71,16 @@ export class Compiler {
     // start 是游戏入口 label，始终有效
     this.sceneLabels.add('start');
 
+    // 预先收集所有场景中所有内部 label 定义，避免跨场景跳转误报
+    for (const scene of Object.values(project.scenes)) {
+      for (const node of scene.nodes) {
+        if (node.type === 'jump_label' && (node as JumpLabelNode).subType === 'label') {
+          const name = this.sanitizeLabel((node as JumpLabelNode).labelName || 'label_1');
+          this.innerLabels.add(name);
+        }
+      }
+    }
+
     const { sorted, hasCycle, cycleScenes } = topologicalSort(project);
     if (hasCycle) {
       this.issues.push({
@@ -103,7 +113,7 @@ export class Compiler {
     const firstSceneName = sorted.length > 0 ? this.sanitizeLabel(sorted[0].name) : '';
     if (firstSceneName === 'start') {
       // 第一个场景就叫 start，直接用作入口，不再重复生成 label start
-      rpy += `${INDENT}# 游戏从 start 场景开始\n`;
+      rpy += '# 游戏从 start 场景开始\n';
     } else if (sorted.length > 0) {
       // 第一个场景不叫 start，生成入口 label 并跳转
       rpy += 'label start:\n';
@@ -302,7 +312,9 @@ export class Compiler {
 
   private compileAudio(node: AudioNode, sceneId: string): string {
     const asset = this.assetMap.get(node.assetId);
-    if (!asset && node.action !== 'stop') {
+    // pause / resume / stop 不需要素材文件
+    const needsAsset = node.action === 'play';
+    if (!asset && needsAsset) {
       this.issues.push({
         severity: 'error',
         message: `音频素材不存在: ${node.assetId}`,
@@ -318,6 +330,11 @@ export class Compiler {
         if (node.fadeIn > 0) code += ` fadein ${node.fadeIn}`;
         code += '\n';
         return code;
+      } else if (node.audioType === 'voice') {
+        let code = `${INDENT}play voice "audio/${fileName}"`;
+        if (node.fadeIn > 0) code += ` fadein ${node.fadeIn}`;
+        code += '\n';
+        return code;
       } else {
         let code = `${INDENT}play sound "audio/${fileName}"`;
         if (node.fadeIn > 0) code += ` fadein ${node.fadeIn}`;
@@ -330,13 +347,23 @@ export class Compiler {
         if (node.fadeOut > 0) code += ` fadeout ${node.fadeOut}`;
         code += '\n';
         return code;
+      } else if (node.audioType === 'voice') {
+        let code = `${INDENT}stop voice`;
+        if (node.fadeOut > 0) code += ` fadeout ${node.fadeOut}`;
+        code += '\n';
+        return code;
       } else {
-        return `${INDENT}stop sound\n`;
+        let code = `${INDENT}stop sound`;
+        if (node.fadeOut > 0) code += ` fadeout ${node.fadeOut}`;
+        code += '\n';
+        return code;
       }
     } else if (node.action === 'pause') {
-      return `${INDENT}$ renpy.music.pause()\n`;
+      const channel = node.audioType === 'bgm' ? 'music' : node.audioType;
+      return `${INDENT}$ renpy.music.pause(channel='${channel}')\n`;
     } else if (node.action === 'resume') {
-      return `${INDENT}$ renpy.music.resume()\n`;
+      const channel = node.audioType === 'bgm' ? 'music' : node.audioType;
+      return `${INDENT}$ renpy.music.resume(channel='${channel}')\n`;
     }
     return '';
   }
@@ -346,8 +373,9 @@ export class Compiler {
    * 支持两种目标：场景 ID（UUID）或自定义 label 名
    */
   private resolveJumpTarget(targetIdOrName: string): string {
-    // 如果是 UUID 格式（包含连字符），尝试从映射中找场景名
-    if (targetIdOrName.includes('-') && this.sceneIdToName.has(targetIdOrName)) {
+    // 使用 UUID 正则严格匹配，避免自定义 label 名被误判为 UUID
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (uuidPattern.test(targetIdOrName) && this.sceneIdToName.has(targetIdOrName)) {
       return this.sanitizeLabel(this.sceneIdToName.get(targetIdOrName)!);
     }
     // 否则当作 label 名直接 sanitize
@@ -390,6 +418,13 @@ export class Compiler {
       if (choice.targetSceneId) {
         const targetLabel = this.resolveJumpTarget(choice.targetSceneId);
         code += `${INDENT.repeat(3)}jump ${targetLabel}\n`;
+      } else {
+        this.issues.push({
+          severity: 'warning',
+          message: `选项「${choice.text}」未指定跳转目标，执行后将退出菜单`,
+          nodeId: node.id,
+          sceneId,
+        });
       }
     }
     return code;
@@ -412,7 +447,7 @@ export class Compiler {
         });
       }
       // 检查除零
-      if (effect.operation === 'divide' && (effect.value === 0 || effect.value === '0')) {
+      if (effect.operation === 'divide' && Number(effect.value) === 0) {
         this.issues.push({
           severity: 'error',
           message: `除零错误: 变量 ${effect.variableName} 除以零`,
@@ -429,8 +464,8 @@ export class Compiler {
   private compileJumpLabel(node: JumpLabelNode, sceneId: string): string {
     if (node.subType === 'label') {
       const labelName = this.sanitizeLabel(node.labelName || 'label_1');
-      // innerLabels 已在 compileScene 开头预先收集，此处无需重复添加
-      return `${INDENT}label ${labelName}:\n`;
+      // 内部 label 必须在第 0 列，不能缩进（Ren'Py 语法要求）
+      return `\nlabel ${labelName}:\n`;
     } else if (node.subType === 'jump') {
       if (!node.targetLabel || !node.targetLabel.trim()) {
         this.issues.push({
@@ -460,7 +495,7 @@ export class Compiler {
       });
     }
     // 检查除零
-    if (node.operation === 'divide' && (node.value === 0 || node.value === '0')) {
+    if (node.operation === 'divide' && Number(node.value) === 0) {
       this.issues.push({
         severity: 'error',
         message: `除零错误: 变量 ${node.variableName} 除以零`,
@@ -476,21 +511,56 @@ export class Compiler {
 
   private generateImageDeclarations(project: ProjectData): string {
     let code = '# ===== 图片声明 =====\n';
+    const declaredNames = new Set<string>(); // 检测重名
     for (const asset of project.assets) {
       const escapedFileName = this.escapeString(asset.fileName);
       if (asset.type === 'background') {
         const name = `bg_${this.sanitizeName(asset.fileName)}`;
+        if (declaredNames.has(name)) {
+          this.issues.push({
+            severity: 'warning',
+            message: `图片声明名冲突: ${name} (素材: ${asset.fileName})`,
+          });
+          continue;
+        }
+        declaredNames.add(name);
         code += `image ${name} = "images/${escapedFileName}"\n`;
       } else if (asset.type === 'sprite') {
         if (asset.characterId && asset.emotion) {
           // 标准立绘声明：角色名 表情名
-          code += `image ${asset.characterId} ${asset.emotion} = "images/${escapedFileName}"\n`;
+          const name = `${asset.characterId} ${asset.emotion}`;
+          if (declaredNames.has(name)) {
+            this.issues.push({
+              severity: 'warning',
+              message: `图片声明名冲突: ${name} (素材: ${asset.fileName})`,
+            });
+            continue;
+          }
+          declaredNames.add(name);
+          code += `image ${name} = "images/${escapedFileName}"\n`;
         } else if (asset.characterId) {
           // 有角色名无表情名：用角色名作为基础 image 声明
-          code += `image ${asset.characterId} = "images/${escapedFileName}"\n`;
+          const name = asset.characterId;
+          if (declaredNames.has(name)) {
+            this.issues.push({
+              severity: 'warning',
+              message: `图片声明名冲突: ${name} (素材: ${asset.fileName})`,
+            });
+            continue;
+          }
+          declaredNames.add(name);
+          code += `image ${name} = "images/${escapedFileName}"\n`;
         } else {
           // 无角色信息：用文件名生成声明
           const name = `sprite_${this.sanitizeName(asset.fileName)}`;
+          if (declaredNames.has(name)) {
+            this.issues.push({
+              severity: 'warning',
+              message: `图片声明名冲突: ${name} (素材: ${asset.fileName})`,
+            });
+            continue;
+          }
+          declaredNames.add(name);
           code += `image ${name} = "images/${escapedFileName}"\n`;
         }
       }

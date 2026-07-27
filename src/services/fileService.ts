@@ -322,11 +322,11 @@ export async function exportProjectPackage(
   zip.file('project.json', JSON.stringify(data, null, 2));
 
   // 2. Ren'Py 脚本（如果有）
-  const renpyFolder = zip.folder('renpy');
-  if (scriptRpy) renpyFolder?.file('script.rpy', scriptRpy);
-  if (optionsRpy) renpyFolder?.file('options.rpy', optionsRpy);
-  if (variablesRpy) renpyFolder?.file('variables.rpy', variablesRpy);
-  if (screensRpy) renpyFolder?.file('screens.rpy', screensRpy);
+  const gameFolder = zip.folder('game');
+  if (scriptRpy) gameFolder?.file('script.rpy', scriptRpy);
+  if (optionsRpy) gameFolder?.file('options.rpy', optionsRpy);
+  if (variablesRpy) gameFolder?.file('variables.rpy', variablesRpy);
+  if (screensRpy) gameFolder?.file('screens.rpy', screensRpy);
 
   // 3. 素材文件（用 asset.id 作为文件名，避免重名覆盖）
   const assetsFolder = zip.folder('assets');
@@ -335,7 +335,8 @@ export async function exportProjectPackage(
     const blob = blobs.get(asset.id);
     if (blob) {
       // 使用 asset.id 作为主文件名，扩展名从原文件名提取，确保唯一
-      const ext = asset.fileName.includes('.') ? '.' + asset.fileName.split('.').pop() : '';
+      const dotIdx = asset.fileName.lastIndexOf('.');
+      const ext = dotIdx > 0 ? asset.fileName.slice(dotIdx) : '';
       assetsFolder?.file(`${asset.id}${ext}`, blob);
     }
   }
@@ -476,7 +477,7 @@ export async function startPreview(
   // 浏览器降级：在新窗口展示生成的脚本
   const w = window.open('', '_blank');
   if (w) {
-    w.document.write(`<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:monospace;padding:16px;">${scriptRpy.replace(/</g, '&lt;')}</pre>`);
+    w.document.write(`<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:monospace;padding:16px;">${scriptRpy.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</pre>`);
     w.document.title = 'Ren\'Py 预览 - script.rpy';
   } else {
     console.log('=== 预览（浏览器降级模式）===');

@@ -6,3 +6,14 @@ dist/
 electron/dist/
 .vite/
 /.idea
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+*.egg
+venv/
+.venv/
+.env
